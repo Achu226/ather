@@ -1,4 +1,4 @@
-# Maya 1.8.2 — full source listing
+# Maya 1.8.3 — full source listing
 
 Same order as CODE_GUIDE.md.
 
@@ -44,7 +44,8 @@ async function printPdf(html) {
   }
 }
 import { fileURLToPath } from 'node:url';
-import { openStore } from './store.js';
+import { openStore, now } from './store.js';
+import { createTelegram } from './services/telegram.js';
 import { createMl } from './ml/client.js';
 import { createSecrets } from './secrets.js';
 import { createWindows } from './windows.js';
@@ -53,7 +54,7 @@ import { allTools } from './tools/index.js';
 import { ensureOllama, ensureBrainModel, hasModel, pullModel } from './ollama.js';
 import { systemCheck } from './services/syscheck.js';
 import os from 'node:os';
-import { BRAIN_MODEL, BASE_MODEL, complete } from './brain.js';
+import { BRAIN_MODEL, BASE_MODEL, complete, ask } from './brain.js';
 import { hfModels, hfInstalled } from './ml/catalog.js';
 import { webSearch, readPage } from './services/web.js';
 import { createSearch } from './services/search.js';
@@ -167,6 +168,23 @@ app.whenReady().then(async () => {
     windows.sos(s.state === 'cancelled' || s.state === 'off' ? null : s);
     windows.toNotch('sos', s);
   }, call: (number) => phoneCall({ pc: services.pc, open: (url) => shell.openExternal(url), number }) });
+  // Maya from the phone (Telegram): its own conversation, so the chat shows up on the PC too.
+  const phoneConversation = () => {
+    const id = store.getSetting('phoneConversation');
+    if (id && store.get('SELECT id FROM conversations WHERE id = ?', id)) return id;
+    const fresh = Number(store.run('INSERT INTO conversations (title, created_at, updated_at) VALUES (?,?,?)', 'From my phone (Telegram)', now(), now()).lastInsertRowid);
+    store.setSetting('phoneConversation', fresh);
+    return fresh;
+  };
+  services.telegram = createTelegram({
+    store, secrets, onChange: () => windows.broadcast('data:changed'),
+    answer: async (text, { confirm }) => {
+      const reply = await ask({ text, store, tools: [...allTools, ...services.mcpClient.tools()], services: { ...services, confirm }, conversationId: phoneConversation(), style: 'short' });
+      windows.broadcast('data:changed');
+      return reply;
+    },
+  });
+  services.telegram.start();
   // Work timer: goodbye, a minute to say "wait", then a normal shutdown (apps can still ask to save).
   // ATHER_NO_SHUTDOWN: the live tests run the whole goodbye without ever switching the PC off.
   services.session = createSession({ store, activity: services.activity,
@@ -345,6 +363,8 @@ app.whenReady().then(async () => {
     windows.expand(false);
     windows.toNotch('notify', { title, body, kind, id });
     windows.broadcast('data:changed');
+    // Reminders, medicine and classes also reach the phone (Telegram, when paired): the user may be away from the PC.
+    if (kind === 'reminder' || kind === 'care') services.telegram.notify(`⏰ ${title}: ${body}`);
   };
   startScheduler(store, notify);
   setInterval(() => careTick(store, (reason) => services.sos.notify(reason)).then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 60_000);
@@ -736,6 +756,9 @@ contextBridge.exposeInMainWorld('ather', {
   sosTest: invoke('sos:test'),
   sosTestCall: invoke('sos:testCall'),
   sosLog: invoke('sos:log'),
+  telegramStatus: invoke('telegram:status'),
+  telegramSetToken: invoke('telegram:setToken'),
+  telegramForget: invoke('telegram:forget'),
   onSos: on('sos'),
   onSession: on('session'),
   sessionExtend: invoke('session:extend'),
@@ -898,6 +921,7 @@ import { systemCheck } from './services/syscheck.js';
 import { MAIL_PRESETS } from './services/mail.js';
 import { careDone } from './services/scheduler.js';
 import { fixHeard, learnWord, wordFixes, saveFeedback, reflect } from './services/learning.js';
+import { learnSkill, saveSkill } from './services/skills.js';
 import { workToday } from './services/worklog.js';
 import { chromeProfiles } from './services/pc.js';
 import { finishDictation } from './services/dictate.js';
@@ -1012,6 +1036,11 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
       updateSummary(store, conv).catch(() => {});
       // Think back on what the user said and keep the lasting facts (local model, in the background).
       reflect(store, text, answer, (p, o) => complete(p, o)).then((kept) => kept.length && changed()).catch(() => {});
+      // A job that worked and no skill covered becomes a skill offer; it is kept only if the user says yes.
+      const done = store.get("SELECT tools FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", conv);
+      learnSkill(store, text, JSON.parse(done?.tools || '[]'), (p, o) => complete(p, o))
+        .then(async (skill) => { if (skill && await requestApproval(event.sender, { name: 'skills_learn', args: skill })) { saveSkill(store, skill); changed(); } })
+        .catch(() => {});
       return answer;
     } finally {
       running.delete(id);
@@ -1051,6 +1080,10 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('sos:test', () => services.sos.test());
   handle('sos:testCall', () => services.sos.testCall());
   handle('sos:log', () => store.getSetting('sosLog', []));
+  // Telegram (Connections page): the token never comes back to the screen, only the status.
+  handle('telegram:status', () => services.telegram.status());
+  handle('telegram:setToken', async (token) => { const s = await services.telegram.setToken(token); services.telegram.start(); return s; });
+  handle('telegram:forget', () => { services.telegram.forget(); return services.telegram.status(); });
   ipcMain.on('voice:heard', () => { services.lastVoice = Date.now(); });
   handle('headmouse:set', (on) => services.headMouse.set(on));
   handle('headmouse:model', async () => readFileSync(await downloadFile('facemesh')));
@@ -3475,7 +3508,10 @@ import { useEffect, useState } from 'react';
 import { useSetting } from './Settings.jsx';
 
 const A11Y_DEFAULTS = { dwell: 0, switchKey: 'F9', scanMs: 1200, keyboardLayout: 'en', keyboardSize: 1 };
-const SOS_DEFAULTS = { contacts: [], phones: [], shareLocation: false, daily: { on: false, time: '20:00' }, name: '', note: '', checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' } };
+const SOS_DEFAULTS = { contacts: [], phones: [], shareLocation: false, daily: { on: false, time: '20:00' }, name: '', note: '', checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' }, medical: {} };
+// Same fields as MEDICAL_FIELDS in services/sos.js (shown on the help sign, sent with the SOS email).
+const MEDICAL = [['blood', 'Blood group', 'e.g. O+'], ['allergies', 'Allergies', 'e.g. Penicillin, peanuts, none'], ['conditions', 'Conditions', 'e.g. Diabetes, epilepsy, spinal injury'],
+  ['medicines', 'Medicines', 'e.g. Insulin 10 units at 8 am'], ['doctor', 'Doctor', 'Name and phone']];
 const errText = (e) => e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 const COMMANDS = [
@@ -3627,6 +3663,16 @@ export default function Accessibility() {
             <input id="sos-p" className="input" type="tel" value={phones} onChange={(e) => setPhones(e.target.value)} onBlur={savePhones} placeholder="+91 98765 43210" /></div>
           <div className="field"><label htmlFor="sos-note">Note for them (medicine, door key, doctor's number…)</label>
             <input id="sos-note" className="input" value={s.note} onChange={(e) => setS({ note: e.target.value })} /></div>
+          <fieldset className="medical-id">
+            <legend>🩺 Medical ID</legend>
+            <p className="muted small-print">Shown on the help sign and sent to your caregivers in an emergency. You can also say “my blood group is O positive”.</p>
+            <div className="medical-grid">
+              {MEDICAL.map(([k, label, hint]) => (
+                <div className="field" key={k}><label htmlFor={`med-${k}`}>{label}</label>
+                  <input id={`med-${k}`} className="input" value={s.medical?.[k] || ''} placeholder={hint} onChange={(e) => setS({ medical: { ...s.medical, [k]: e.target.value } })} /></div>
+              ))}
+            </div>
+          </fieldset>
           <label className="row field"><input type="checkbox" className="check" checked={!!s.shareLocation} onChange={(e) => setS({ shareLocation: e.target.checked })} />
             Add my approximate location to the emergency email (from the internet connection; only when help is asked for)</label>
           <label className="row field"><input type="checkbox" className="check" checked={!!s.daily?.on} onChange={(e) => setS({ daily: { ...SOS_DEFAULTS.daily, ...s.daily, on: e.target.checked } })} />
@@ -3893,10 +3939,15 @@ import nodemailer from 'nodemailer';
 
 // The mail account connected in Inbox (IMAP) also sends: the matching SMTP servers.
 const SMTP = { 'imap.gmail.com': 'smtp.gmail.com', 'outlook.office365.com': 'smtp.office365.com', 'imap.mail.yahoo.com': 'smtp.mail.yahoo.com' };
-export const SOS_DEFAULTS = { contacts: [], phones: [], name: '', note: '', shareLocation: false, daily: { on: false, time: '20:00' }, checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' } };
+export const SOS_DEFAULTS = { contacts: [], phones: [], name: '', note: '', shareLocation: false, daily: { on: false, time: '20:00' }, checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' }, medical: {} };
+
+// Medical ID: what a caregiver or paramedic needs first. Shown on the help sign and sent with the SOS email.
+export const MEDICAL_FIELDS = [['blood', 'Blood group'], ['allergies', 'Allergies'], ['conditions', 'Conditions'], ['medicines', 'Medicines'], ['doctor', 'Doctor']];
+/** "Blood group: O+" lines for the fields that are filled in (exported for tests). */
+export const medicalLines = (medical) => MEDICAL_FIELDS.filter(([k]) => String(medical?.[k] ?? '').trim()).map(([k, label]) => `${label}: ${String(medical[k]).trim()}`);
 
 /** The email caregivers get (exported for tests). */
-export function sosEmail({ name, note, reason, at, location }) {
+export function sosEmail({ name, note, reason, at, location, medical }) {
   const who = name || 'Your contact';
   const when = at.toLocaleString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
   return {
@@ -3904,7 +3955,8 @@ export function sosEmail({ name, note, reason, at, location }) {
     text: `${who} asked for help through Maya (${reason}) on ${when}.\n\n`
       + 'Please call or go to them now. An alarm is sounding on their computer and a "I need help" sign is on the screen.'
       + (location ? `\n\nApproximate location (from the internet connection, may be a few km off): ${location}` : '')
-      + (note ? `\n\nNote from ${who}: ${note}` : '') + '\n\nSent automatically by Maya.',
+      + (note ? `\n\nNote from ${who}: ${note}` : '')
+      + (medicalLines(medical).length ? `\n\nMedical ID:\n${medicalLines(medical).map((l) => `- ${l}`).join('\n')}` : '') + '\n\nSent automatically by Maya.',
   };
 }
 
@@ -3957,17 +4009,17 @@ export function createSos({ store, secrets, onState = () => {}, transport, call 
   let pending = null;
   const settings = () => ({ ...SOS_DEFAULTS, ...store.getSetting('sos', SOS_DEFAULTS) });
   // The SOS screen shows these even while Maya is PIN-locked, so they travel with each state.
-  const who = () => ({ name: settings().name, note: settings().note });
+  const who = () => ({ name: settings().name, note: settings().note, medical: medicalLines(settings().medical) });
   const log = (entry) => store.setSetting('sosLog', [{ at: new Date().toISOString(), ...entry }, ...store.getSetting('sosLog', [])].slice(0, 30));
 
   async function email(reason, { test = false, message = null } = {}) {
-    const { contacts, name, note, shareLocation } = settings();
+    const { contacts, name, note, shareLocation, medical } = settings();
     if (!contacts.length) return { sent: 0, error: 'No caregiver email is saved (Accessibility page).' };
     const cfg = store.getSetting('mail');
     const pass = secrets.get('mail-password');
     if (!transport && (!cfg?.user || !pass)) return { sent: 0, error: 'Email is not connected (Inbox page), so no email could be sent.' };
     const mailer = transport || nodemailer.createTransport({ host: SMTP[cfg.host] || cfg.host.replace(/^imap\./, 'smtp.'), port: 465, secure: true, auth: { user: cfg.user, pass } });
-    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null });
+    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null, medical });
     await mailer.sendMail({ from: cfg?.user || 'ather@localhost', to: contacts.join(', '), subject: test ? `Test: ${msg.subject}` : msg.subject,
       text: test ? `This is only a test of Maya's emergency button. Nothing is wrong.\n\n---\n${msg.text}` : msg.text });
     return { sent: contacts.length };
@@ -4034,6 +4086,111 @@ export function createSos({ store, secrets, onState = () => {}, transport, call 
 }
 ```
 
+### src/main/services/telegram.js
+
+```javascript
+// Talk to Maya from your phone through your own Telegram bot (free). Off until the user pastes a bot token from
+// @BotFather; the token is kept encrypted (secrets). The first chat that sends the 6-digit code shown in Maya becomes
+// the owner, and every other chat is ignored without a reply. From the phone Maya answers and does safe things
+// (tasks, reminders, notes, questions); anything that needs an approval card is refused: approve it on the PC.
+import { randomInt } from 'node:crypto';
+
+const API = 'https://api.telegram.org/bot';
+const LIMIT = 4096; // Telegram's longest message
+
+/** A long answer in Telegram-sized parts (exported for tests). */
+export const splitMessage = (text) => {
+  const parts = [];
+  for (let s = String(text || '…'); s.length; s = s.slice(LIMIT)) parts.push(s.slice(0, LIMIT));
+  return parts;
+};
+
+const newCode = () => String(randomInt(100000, 1000000));
+
+export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChange = () => {} }) {
+  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, ...store.getSetting('telegram', {}) });
+  const save = (patch) => { store.setSetting('telegram', { ...state(), ...patch }); onChange(); };
+  let running = false, error = null;
+
+  async function call(method, body = {}, token = secrets.get('telegram-token')) {
+    const res = await fetchFn(`${API}${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(40_000) });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) throw Object.assign(new Error('Telegram no longer accepts the bot token: paste a new one from @BotFather.'), { unauthorized: true });
+    if (!res.ok || !data.ok) throw new Error(`Telegram: ${data.description || `error ${res.status}`}`);
+    return data.result;
+  }
+  const send = async (chatId, text) => { for (const part of splitMessage(text)) await call('sendMessage', { chat_id: chatId, text: part }); };
+
+  async function handle(msg) {
+    const chatId = msg.chat?.id, text = String(msg.text || '').trim();
+    if (!chatId || !text) return;
+    const s = state();
+    if (!s.ownerId) {
+      if (text.replace(/^\/start\s*/, '') !== s.code) return send(chatId, 'Hi! To use me, send the 6-digit code shown in Maya on your PC (Connections → Telegram).');
+      save({ ownerId: chatId, chat: msg.from?.first_name || 'you', code: '' });
+      return send(chatId, '✅ Paired! I am Maya. Ask me anything, or tell me to add a task, a reminder or a note. Things that need your OK (mouse and keyboard, sending mail) must be approved on the PC.');
+    }
+    if (chatId !== s.ownerId) return; // strangers get nothing, not even a hint that the bot works
+    const refused = [];
+    let reply;
+    try {
+      reply = await answer(text, { confirm: async (req) => { refused.push(req.name); return false; } });
+    } catch (e) { reply = `Sorry, that did not work: ${e.message}`; }
+    if (refused.length) reply += `\n\n🔒 For safety, approve ${[...new Set(refused)].map((n) => n.replace(/_/g, ' ')).join(', ')} on the PC.`;
+    await send(chatId, reply);
+  }
+
+  /** One round of long polling: handles every new message once; false when Telegram could not be reached. */
+  async function pollOnce(timeout = 0) {
+    if (!secrets.get('telegram-token')) return false;
+    try {
+      const updates = await call('getUpdates', { offset: state().offset, timeout, allowed_updates: ['message'] });
+      for (const u of updates) {
+        save({ offset: u.update_id + 1 }); // first: a message that crashes Maya is not retried forever
+        if (u.message) await handle(u.message).catch(() => {});
+      }
+      error = null;
+      return true;
+    } catch (e) {
+      error = e.message;
+      if (e.unauthorized) running = false;
+      onChange();
+      return false;
+    }
+  }
+
+  return {
+    status: () => { const s = state(); return { configured: !!secrets.get('telegram-token'), bot: s.bot, paired: !!s.ownerId, chat: s.chat, code: s.ownerId ? '' : s.code, running, error }; },
+    /** Checks the token with Telegram, keeps it encrypted, and starts a fresh pairing. */
+    async setToken(token) {
+      token = String(token || '').trim();
+      let me;
+      try { me = await call('getMe', {}, token); } catch { throw new Error('Telegram did not accept this token. Copy it again from @BotFather (it looks like 123456:ABC…).'); }
+      secrets.set('telegram-token', token);
+      save({ bot: me.username, ownerId: null, chat: '', code: newCode(), offset: 0 });
+      error = null;
+      return this.status();
+    },
+    /** A reminder to the paired phone; does nothing if not paired and never throws (it runs inside timers). */
+    async notify(text) {
+      const { ownerId } = state();
+      if (ownerId && secrets.get('telegram-token')) await send(ownerId, text).catch(() => {});
+    },
+    forget() { this.stop(); secrets.set('telegram-token', null); store.setSetting('telegram', {}); error = null; onChange(); },
+    pollOnce,
+    start() {
+      if (running || !secrets.get('telegram-token')) return;
+      running = true;
+      (async () => {
+        // Offline or Telegram down: wait a little before trying again (a revoked token stops the loop).
+        while (running) if (!(await pollOnce(25))) await new Promise((r) => setTimeout(r, 5000));
+      })();
+    },
+    stop() { running = false; },
+  };
+}
+```
+
 ### src/renderer/sos.html
 
 ```html
@@ -4053,6 +4210,10 @@ export function createSos({ store, secrets, onState = () => {}, transport, call 
       .count { font-size: clamp(90px, 18vw, 220px); font-weight: 800; line-height: 1; }
       p { font-size: 26px; margin: 0; max-width: 1000px; }
       .info { font-size: 22px; opacity: .92; }
+      /* Medical ID for whoever arrives: dark on white so it stays readable while the background flashes. */
+      .medical { background: #fff; color: #1a1a1a; border-radius: 16px; padding: 14px 28px; text-align: left; font-size: 24px; max-width: 900px; }
+      .medical h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: 1.5px; color: #b00020; }
+      .medical ul { margin: 0; padding-left: 24px; }
       button { font: 700 30px 'Segoe UI', sans-serif; padding: 22px 60px; border: 0; border-radius: 20px; background: #fff; color: #b00020; cursor: pointer; }
       button:focus-visible { outline: 6px solid #ffd166; outline-offset: 4px; }
       @media (prefers-reduced-motion: reduce) { .alarm { animation: none; } }
@@ -4121,6 +4282,7 @@ function Sos() {
       <div className="ta">எனக்கு உதவி தேவை</div>
       {s.name && <p>{s.name} needs help. Please come and check on them.</p>}
       {s.note && <p className="info">Note: {s.note}</p>}
+      {s.medical?.length > 0 && <section className="medical" aria-label="Medical ID"><h2>MEDICAL ID</h2><ul>{s.medical.map((l) => <li key={l}>{l}</li>)}</ul></section>}
       {(s.calling || s.call_error) && <p className="info">{s.calling ? `📞 Calling ${s.calling}…` : `⚠ ${s.call_error}`}</p>}
       <p className="info">{s.sent ? `✓ ${s.sent} caregiver${s.sent > 1 ? 's were' : ' was'} emailed.` : s.error ? `⚠ ${s.error}` : 'Contacting caregivers…'}</p>
       <button autoFocus onClick={stop}>Help is here — stop the alarm</button>
@@ -4642,6 +4804,12 @@ textarea.input { resize: vertical; min-height: 120px; }
 .cmds td { padding: 5px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .sos-panel { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 .big-sos { font-size: 18px; padding: 14px 26px; background: var(--bad); color: #fff; border-color: var(--bad); }
+.pair-code { display: inline-block; margin-top: 8px; font: 700 32px/1.2 ui-monospace, Consolas, monospace; letter-spacing: 6px; padding: 6px 14px; border: 2px dashed var(--accent); border-radius: var(--radius); }
+.steps { margin: 0 0 8px; padding-left: 20px; }
+.medical-id { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 14px 2px; margin: 6px 0 10px; }
+.medical-id legend { padding: 0 6px; font-weight: 600; }
+.medical-id .small-print { font-size: 13px; margin: 0 0 6px; }
+.medical-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0 12px; }
 
 /* Large and high-contrast mode: bigger everything, strong outlines, clearer text */
 body { zoom: var(--ui-zoom, 1); }
@@ -5364,7 +5532,7 @@ export const BASE_MODEL = 'qwen3.5:4b';
 export const BRAIN_MODEL = 'ather-brain'; // BASE_MODEL with a bigger context, see ensureBrainModel
 const MAX_TOOL_ROUNDS = 6;
 // Tools that read the user's screen, files or mail are not offered to cloud models without permission.
-const CLOUD_PRIVATE = /^(screen_look|files_|open_file|python_|images_(blur|remove|upscale)|mail_|fs_|computer_|clipboard_|camera_|contacts_|call_contact|whatsapp_|diary_)/;
+export const CLOUD_PRIVATE = /^(screen_look|files_|open_file|python_|images_(blur|remove|upscale)|mail_|fs_|computer_|clipboard_|camera_|contacts_|call_contact|whatsapp_|diary_|medical_)/;
 const AGENT_ROUNDS = 25;
 const BUILDER_ROUNDS = 40;
 const COMPUTER_ROUNDS = 30;
@@ -6299,7 +6467,9 @@ const GROUPS = [
   [/\b(water|hydrat|eye breaks?|20-20-20|posture|stretch|health (break|reminder)s?)/i, /^health_/],
   [/\b(head mouse|hands?-free|without (a |the )?mouse|can'?t use (a |the |my )?mouse|move the (cursor|mouse) with my head|head (control|tracking))/i, /^head_mouse$/],
   [/\b(captions?|subtitles?|translate (this|the) (video|audio|call|class)|what (are|is) they saying)/i, /^captions_/],
-  [/\b((in|on|into) (whatsapp|notepad|word|excel|telegram|teams|outlook|paint|settings|chrome|edge|google|youtube|gmail|the app|the browser|this (app|window|page))|type (?!of\b)\S|write .+ (in|into|on) |click\b|select\b|open .+ (and|then) (type|search|write|click|send|play)|fill (in|out|this)|(message|text|whatsapp) \w+|send (a|the|my)? ?message|(take )?control (of )?(my|the) (pc|computer|laptop)|use my (pc|computer|laptop)|do it for me|go to|scroll (up|down)|press (enter|the|ctrl)|(search|look up) .* (in|on) (chrome|google|youtube|edge))/i, /^computer_/],
+  [/\b(wheel ?chair|accessible|ramps?|step-?free|near me|nearby|nearest|closest|around here)\b/i, /^places_accessible$/],
+  [/\b(medical (id|info|details)|blood (group|type)|allerg|my (health )?conditions?|my doctor)/i, /^medical_id$/],
+  [/\b((in|on|into) (whatsapp|notepad|word|excel|telegram|teams|outlook|paint|settings|chrome|edge|google|youtube|gmail|the app|the browser|this (app|window|page))|type (?!of\b)\S|write .+ (in|into|on) |click\b|select\b|open .+ (and|then) (type|search|write|click|send|play|calculate|work out|draw|drag|rename|edit)|(use|using|with) (the |my )?(mouse|keyboard)|fill (in|out|this)|(message|text|whatsapp) \w+|send (a|the|my)? ?message|(take )?control (of )?(my|the) (pc|computer|laptop)|use my (pc|computer|laptop)|do it for me|go to|scroll (up|down)|press (enter|the|ctrl)|(search|look up) .* (in|on) (chrome|google|youtube|edge))/i, /^computer_/],
 ];
 
 /** Tools for this request: a few always, plus groups whose keywords appear in this or the previous user message. */
@@ -6320,6 +6490,7 @@ export function selectTools(tools, text, { agent = false, previous = '', images 
 // A dozen come built in; the user teaches more by voice or on the Skills page. The best match for a request
 // adds its steps to the instructions and its tools to the ones offered.
 import { now } from '../store.js';
+import { looksLikePassword } from './clipboard.js';
 
 export const BUILTIN = [
   ['Research report', 'research a topic and write a report or essay about it', 'Search the web (web_search, web_read) for 3-5 good sources. Write a clear report with headings, an introduction, main points and a conclusion, and list the sources at the end. Save it with files_make_document and tell the user where it is.', '^(web_|files_make_document)'],
@@ -6338,6 +6509,12 @@ export const BUILTIN = [
   ['Phone by voice', 'read my phone notifications, my text messages or SMS, send a text from my phone, check missed calls', 'pc_open_app Phone Link, then computer_start and computer_look. For notifications or messages, read the newest ones aloud. To send a text: open Messages, pick or search the contact, computer_type the message in the user\'s words, read it back, and send only after the user says yes. To call someone use call_contact.', '^(pc_open_app|computer_|call_contact)$'],
   ['YouTube by voice', 'open YouTube, scroll YouTube, play the first video, play or pause a video on YouTube', 'If the user names a song or video, music_play plays it straight away. Otherwise: open_website https://www.youtube.com, then computer_start and computer_look. "Scroll" = computer_scroll down (then look again). "Play the first video" = computer_click the first video thumbnail or title (top-left of the grid, not an ad or a Short), then computer_look to check it plays. "Pause" / "play" = computer_keys k; "full screen" = computer_keys f; "next video" = computer_keys shift+n. Say what you are doing as you go.', '^(open_website|computer_|music_play)'],
   ['Explain my screen', 'explain my screen simply, what is on my screen, I do not understand this window', 'Look at the screen with screen_look. Explain in three short, simple sentences what this window is and the one thing the user most likely wants to do next, and offer to do it for them.', '^(screen_look|computer_)'],
+  // Accessibility pack. Names use words that rarely appear in other requests: one name word alone picks a skill.
+  ['Caregiver SOS', 'I need help, I fell or got hurt, call my caregiver or family to come', 'Stay calm and short. Find the caregiver or family member (contacts_query; the person the user names, or relation caregiver, mother, father, brother, sister, wife or husband). Offer to call them now with call_contact. Also offer whatsapp_message with "I need help, please come" (it opens the chat ready; the user presses send). If the user is hurt or in danger, tell them to call 108 or 112 too.', '^(contacts_query|call_contact|whatsapp_message)$'],
+  ['Refill medicines', 'medicine or tablets running out, refill my medicine, buy more tablets', 'Ask which medicine and how many days are left, if not said. Set a care reminder with reminders_create: care true, text "Refill <medicine>", and in_days = days left minus 3 (at least 1); do not work out a date yourself. Tell the user the date from the reminder\'s "at". Add it to the shopping list with list_add. Offer to find the nearest pharmacy with places_accessible.', '^(reminders_create|list_add|places_accessible)$'],
+  ['Read it to me', 'read this page, read my screen or this document aloud slowly', 'If the user gave a web link, use web_read; otherwise look at the screen with screen_look. Read the text in short parts of 3 to 4 sentences, in simple words, slowly. After each part ask "Shall I go on?". Skip menus, ads and buttons.', '^(screen_look|web_read)$'],
+  ['Fill a form for me', 'fill in this form, fill the form on the screen, type my details in the form', 'computer_start, then computer_look to find the form fields. Use what you know about the user (memory_list) for name, address or phone, and ask for anything else one field at a time. Type each answer into its field with computer_type. Never type passwords, card numbers, OTPs or PINs yourself: ask the user to type those. Read the whole form back to the user before submitting, and click Submit only after they say yes.', '^(computer_|memory_list)$'],
+  ['Tired or in pain', 'tired, low energy, pain, my hands hurt, make things easier today', 'Be gentle and brief. Look at today\'s tasks (tasks_query). Do NOT change any task in this answer: name the non-urgent ones and ask "Shall I move them to tomorrow?". Only when the user says yes in their next message, move them with tasks_update. Offer rest reminders every hour (reminders_create with care true). Offer to make the screen easier on the eyes (pc_dark_mode on, pc_brightness lower). Remind them they can just speak instead of typing.', '^(tasks_query|tasks_update|reminders_create|pc_dark_mode|pc_brightness)$'],
   ['Build me an app', 'build, make or code a website, app, game or program', 'Plan the files, write them with fs_write, run them (run_command), check with qa_check_site, fix errors until it works, then open it for the user (open_file / open_website) and explain how to use it in two lines.', '^(fs_|run_command|qa_|git_|open_)'],
 ];
 
@@ -6361,7 +6538,8 @@ const stem = (w) => w.replace(/(ing|ies|es|ed|s)$/, '');
  */
 export function matchSkill(store, text) {
   seedSkills(store);
-  const t = String(text).toLowerCase();
+  // "Open the Calculator app": that "app" already exists, so it must not pull in "Build me an app".
+  const t = String(text).toLowerCase().replace(/\b(open|launch|start|use|in|on|into) (the |my )?([\p{L}\p{N}]+ ){0,3}app\b/gu, '$1');
   const asked = new Set(words(t).map(stem));
   let best = null, bestScore = 0;
   for (const s of store.all('SELECT * FROM skills WHERE enabled = 1')) {
@@ -6381,6 +6559,36 @@ export function saveSkill(store, { name, when, steps, tools = '' }) {
   if (row) store.run('UPDATE skills SET "when" = ?, steps = ?, tools = ?, enabled = 1 WHERE id = ?', when.trim(), steps.trim(), tools, row.id);
   else store.run('INSERT INTO skills (name, "when", steps, tools, created_at) VALUES (?,?,?,?,?)', name.trim(), when.trim(), steps.trim(), tools, now());
   return { saved: name.trim() };
+}
+
+const LOOKUP = /^(agent_|time_|web_)|_(query|status|progress|list|search|read|look)$/;
+const secret = (s) => /\b(password|passcode|pin|otp|cvv|card number)\b/i.test(s) || String(s).split(/\s+/).some(looksLikePassword);
+
+/** The calls of a finished job that worked: planning, failed and refused calls left out. Exported for tests. */
+export const jobSteps = (toolLog) => toolLog.filter((t) => !t.name.startsWith('agent_') && !t.result?.error && !t.result?.denied);
+
+/**
+ * Hermes-style learning: a multi-step job that just worked, which no skill covered, is written up by the local
+ * model as a skill the user can keep. Returns the offer (not saved) or null. Its tools are the ones the job
+ * really used, never what the model writes, so a learned skill cannot reach anything new.
+ */
+export async function learnSkill(store, question, toolLog, complete) {
+  const last = toolLog.at(-1)?.result;
+  if (String(question).trim().split(/\s+/).length < 4 || secret(question) || last?.error || toolLog.some((t) => t.result?.denied)) return null;
+  const steps = jobSteps(toolLog);
+  const names = [...new Set(steps.map((t) => t.name))];
+  if (steps.filter((t) => !LOOKUP.test(t.name)).length < 3 || names.length < 2 || matchSkill(store, question)) return null;
+  const done = steps.map((t, i) => `${i + 1}. ${t.name} ${JSON.stringify(t.args).slice(0, 200)}`).join('\n');
+  const raw = await complete(`The user asked their assistant Maya: "${String(question).slice(0, 500)}"\nMaya did it with these tool calls:\n${done}\n\n`
+    + 'Write this as a reusable skill so Maya can do the same kind of job again. name: 2 to 5 words. when: the kinds of requests it is for, in plain words. '
+    + 'steps: short numbered steps naming the tools to call. Keep it general: write "the contact the user names", "the file the user names", never the actual names, numbers, messages or paths. Reply as JSON.',
+  { format: { type: 'object', required: ['name', 'when', 'steps'], properties: { name: { type: 'string' }, when: { type: 'string' }, steps: { type: 'string' } } } });
+  let skill;
+  try { skill = JSON.parse(raw); } catch { return null; }
+  const name = String(skill.name || '').trim(), when = String(skill.when || '').trim(), how = String(skill.steps || '').trim();
+  if (!name || name.length > 40 || !when || when.length > 300 || !how || how.length > 2000 || secret(how)) return null;
+  if (store.get('SELECT id FROM skills WHERE lower(name) = lower(?)', name)) return null;
+  return { name, when, steps: how, tools: `^(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$` };
 }
 ```
 
@@ -6966,6 +7174,14 @@ export default function Connections({ go, version }) {
   const [chrome, setChrome] = useState([]);
   const [providers, setProviders] = useState([]);
   const [msg, setMsg] = useState(null);
+  const [tg, setTg] = useState(null);
+  const [token, setToken] = useState('');
+  useEffect(() => { window.ather.telegramStatus?.().then(setTg).catch(() => {}); }, [version]);
+  const connectTelegram = async (e) => {
+    e.preventDefault();
+    setMsg('Checking the token with Telegram…');
+    try { setTg(await window.ather.telegramSetToken(token)); setToken(''); setMsg(null); } catch (err) { setMsg(`⚠ ${errText(err)}`); }
+  };
   useEffect(() => {
     window.ather.getSetting('mail', null).then(setMail);
     window.ather.getSetting('sos', {}).then((s) => setSos(s || {}));
@@ -7012,6 +7228,25 @@ export default function Connections({ go, version }) {
 
         <Card icon="🧠" name="Cloud AI (OpenAI, Gemini, Claude…)" on={cloud.length > 0} detail={cloud.length ? `Using: ${cloud.map((p) => p.name).join(', ')}. Also gives Maya the ChatGPT voices.` : 'Optional. Maya works fully offline; add a key for bigger models or the ChatGPT voices.'}>
           <button className="btn" onClick={() => go('models')}>AI models</button>
+        </Card>
+
+        <Card icon="✈️" name="Telegram (Maya on your phone)" on={!!tg?.paired}
+          detail={tg?.paired ? `Paired with ${tg.chat} through @${tg.bot}. Message the bot from anywhere: questions, tasks, reminders, notes. Mouse, keyboard and sending mail still need your OK on the PC.`
+            : 'Talk to Maya from your phone, free, through your own Telegram bot. Only your chat is answered.'}>
+          {!tg?.configured && (
+            <form className="field" onSubmit={connectTelegram}>
+              <ol className="muted steps"><li>On your phone, open Telegram and message <b>@BotFather</b>.</li><li>Send <code>/newbot</code>, pick a name, and copy the token it gives you.</li><li>Paste it here.</li></ol>
+              <div className="row wrap">
+                <input className="input" style={{ flex: 1, minWidth: 220 }} type="password" autoComplete="off" placeholder="123456:ABC…" value={token} onChange={(e) => setToken(e.target.value)} aria-label="Telegram bot token" />
+                <button className="btn primary" disabled={!token.trim()}>Connect</button>
+              </div>
+            </form>
+          )}
+          {tg?.configured && !tg.paired && (
+            <p>Now open <b>@{tg.bot}</b> in Telegram on your phone and send this code:<br /><span className="pair-code" aria-label={`Pairing code ${tg.code.split('').join(' ')}`}>{tg.code}</span></p>
+          )}
+          {tg?.error && <p className="muted" role="status">⚠ {tg.error}</p>}
+          {tg?.configured && <button className="btn small" onClick={async () => setTg(await window.ather.telegramForget())}>Disconnect Telegram</button>}
         </Card>
 
         <Card icon="🔌" name="More tools (MCP)" on detail="GitHub, files, browser automation, docs and more, as connected tools Maya can use." >
@@ -8951,7 +9186,9 @@ const TITLES = {
 };
 
 /** The question on the card (also spoken when the user answers by voice). */
-export const approvalTitle = (r) => (r.name === 'mail_send' && r.args?.to ? `Send this email to ${r.args.to}?` : TITLES[r.name] || `Allow ${r.name.replace(/_/g, ' ')}?`);
+export const approvalTitle = (r) => (r.name === 'mail_send' && r.args?.to ? `Send this email to ${r.args.to}?`
+  : r.name === 'skills_learn' ? `I learned how to do this. Shall I remember it as the skill "${r.args?.name}"?`
+  : TITLES[r.name] || `Allow ${r.name.replace(/_/g, ' ')}?`);
 
 function details(name, args) {
   if (name === 'python_run') return `\`\`\`python\n${args.code}\n\`\`\``;
@@ -8965,6 +9202,7 @@ function details(name, args) {
   }
   if (name === 'mail_send') return `**To:** ${args.to}\n**Subject:** ${args.subject}\n\n${args.text}`;
   if (name === 'mail_reply') return args.text;
+  if (name === 'skills_learn') return `**When:** ${args.when}\n\n${args.steps}\n\nYou can switch it off or delete it on the Skills page.`;
   if (name === 'mail_archive') return `**${args.uids?.length || 0}** email(s). They stay in your archive; nothing is deleted.`;
   if (name === 'mail_add_tasks') return args.items?.map((i) => `- ${i.kind}: **${i.title}**${i.when ? ` (${i.when.replace('T', ' ')})` : ''}`).join('\n');
   return `\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\``;
@@ -8994,10 +9232,10 @@ export default function Approvals({ onPending = () => {} }) {
 
   return requests.map((r) => (
     <div key={r.id} className="approval" role="alertdialog" aria-label={approvalTitle(r)}>
-      <b>⚠ {approvalTitle(r)}</b>
+      <b>{r.name === 'skills_learn' ? '💡' : '⚠'} {approvalTitle(r)}</b>
       <div className="approval-body"><Markdown text={details(r.name, r.args || {})} /></div>
       <div className="row">
-        <button className="btn small primary" onClick={() => answer(r.id, true)}>{r.name === 'python_run' ? '▶ Run' : 'Allow'}</button>
+        <button className="btn small primary" onClick={() => answer(r.id, true)}>{r.name === 'python_run' ? '▶ Run' : r.name === 'skills_learn' ? 'Keep it' : 'Allow'}</button>
         <button className="btn small" onClick={() => answer(r.id, false)}>Cancel</button>
       </div>
     </div>
@@ -11968,6 +12206,7 @@ process.exit(ok ? 0 : 1);
 ```javascript
 import { classesBetween } from './student.js';
 import { now } from '../store.js';
+import { localIso } from '../services/calendar-feeds.js';
 
 const str = (description) => ({ type: 'string', description });
 const int = (description) => ({ type: 'integer', description });
@@ -12060,10 +12299,15 @@ export const productivityTools = [
     name: 'reminders_create',
     description: 'Set a reminder that pops up and plays a sound at an exact time. repeat: daily, weekdays or weekly. Not for "if someone does not reply" (use mail_follow_up).',
     parameters: obj({ text: str('What to remind about'), at: str('Local ISO date-time, e.g. 2026-10-28T18:30'),
+      in_days: { type: 'integer', description: 'Instead of at: this many days from today, at 9 am (e.g. 2 for "in 2 days")' },
       repeat: { type: 'string', enum: ['none', 'daily', 'weekdays', 'weekly'], description: 'Only when the user said every day / every weekday / every week; otherwise none' },
-      care: { type: 'boolean', description: 'true for medicine, tablets, insulin, injections, physio, drinking water for health: Maya waits for "done" and emails a caregiver if not confirmed' } }, ['text', 'at']),
-    run: ({ text, at, repeat, care }, { store }) =>
-      store.insert('reminders', { text, at, repeat: repeat === 'none' ? null : repeat, care: care ? 1 : 0, created_at: now() }, `Set reminder "${text}"`),
+      care: { type: 'boolean', description: 'true for medicine, tablets, insulin, injections, physio, drinking water for health: Maya waits for "done" and emails a caregiver if not confirmed' } }, ['text']),
+    run: ({ text, at, in_days, repeat, care }, { store }) => {
+      // Days ahead are counted here: small models get date maths wrong (a refill set for the day the tablets run out).
+      if (!at && Number.isInteger(in_days)) { const d = new Date(); d.setDate(d.getDate() + Math.max(0, in_days)); d.setHours(9, 0, 0, 0); at = localIso(d); }
+      if (!at) throw new Error('Give the reminder a time: at or in_days.');
+      return store.insert('reminders', { text, at, repeat: repeat === 'none' ? null : repeat, care: care ? 1 : 0, created_at: now() }, `Set reminder "${text}"`);
+    },
   },
   {
     name: 'reminders_query',
@@ -14569,6 +14813,7 @@ createRoot(document.getElementById('root')).render(<Captions />);
 import { now } from '../store.js';
 import { matchApp } from '../services/pc.js';
 import { INTERPRETER_LANGUAGES } from '../services/interpreter.js';
+import { KINDS, findAccessible } from '../services/places.js';
 
 const str = (description) => ({ type: 'string', description });
 const obj = (properties, required = []) => ({ type: 'object', properties, required });
@@ -14594,6 +14839,21 @@ export function whereOnScreen({ x, y }, b) {
 export const firstVideoId = (html) => /"videoId":"([\w-]{11})"/.exec(html)?.[1] ?? null;
 
 export const everydayTools = [
+  {
+    name: 'places_accessible',
+    description: 'Find wheelchair-accessible places near a town or area (hospital, pharmacy, accessible toilets, restaurant…) from OpenStreetMap. '
+      + 'Accessible ones come first. Read out the top 3 with distance and access; say "unknown" places should be called first.',
+    parameters: obj({
+      kind: { type: 'string', enum: Object.keys(KINDS), description: 'Kind of place' },
+      near: str('Town, city or area. Leave empty for the user\'s saved city.'),
+      radius_km: { type: 'number', description: 'Search radius in km (default 3, at most 10)' },
+    }, ['kind']),
+    run: async ({ kind, near, radius_km }, { store, services }) => {
+      const where = String(near || '').trim() || store.getSetting('city', '');
+      if (!where) return { ask_user: 'Ask the user which town or area to search near (they can also save their city in Settings).' };
+      return findAccessible({ kind, near: where, radiusKm: radius_km }, { fetchFn: services?.fetch || fetch });
+    },
+  },
   {
     name: 'screen_point',
     description: 'Show the user where something is in the window they are using: "where is the Save button?", "where do I click to attach?". Draws an arrow at it on screen.',
@@ -14731,6 +14991,106 @@ export const everydayTools = [
     },
   },
 ];
+```
+
+### src/main/services/places.js
+
+```javascript
+// Wheelchair-accessible places nearby, from OpenStreetMap's own search (Nominatim: free, no key; one request per
+// question, as its usage policy asks). Only the area name and the kind of place leave the PC. OSM's wheelchair tag
+// is trusted as it is: an untagged place is "unknown", never "accessible". (The Overpass servers were tried first
+// but timed out from here on 2026-11-09; Nominatim answered in about a second with the same tags.)
+
+/** Kinds of place: the words searched for, and the OSM category/type a real result must have. */
+export const KINDS = {
+  hospital: ['hospital', 'amenity', /^hospital$/],
+  clinic: ['clinic', 'amenity', /^(clinic|doctors)$/],
+  pharmacy: ['pharmacy', 'amenity', /^pharmacy$/],
+  toilets: ['toilets', 'amenity', /^toilets$/],
+  restaurant: ['restaurant', 'amenity', /^restaurant$/],
+  cafe: ['cafe', 'amenity', /^cafe$/],
+  atm: ['atm', 'amenity', /^atm$/],
+  bank: ['bank', 'amenity', /^bank$/],
+  bus_stop: ['bus stop', 'highway', /^bus_stop$/],
+  train_station: ['railway station', 'railway', /^(station|halt)$/],
+  supermarket: ['supermarket', 'shop', /^supermarket$/],
+  police: ['police', 'amenity', /^police$/],
+  park: ['park', 'leisure', /^park$/],
+};
+
+const RANK = { yes: 0, limited: 1, unknown: 2 };
+const HEADERS = { 'User-Agent': 'Maya-assistant (accessible places)' };
+
+/** Nominatim search for one kind of place in a box radiusKm around a point. Exported for tests. */
+export function searchUrl(kind, lat, lon, radiusKm) {
+  if (!KINDS[kind]) throw new Error(`Unknown kind of place "${kind}". Use one of: ${Object.keys(KINDS).join(', ')}.`);
+  const dLat = radiusKm / 111, dLon = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
+  const box = [lon - dLon, lat + dLat, lon + dLon, lat - dLat].map((n) => n.toFixed(5)).join(',');
+  return `https://nominatim.openstreetmap.org/search?format=jsonv2&extratags=1&addressdetails=1&limit=40&bounded=1&viewbox=${box}&q=${encodeURIComponent(KINDS[kind][0])}`;
+}
+
+function distanceKm(a, b) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const h = Math.sin(rad(b.latitude - a.latitude) / 2) ** 2 + Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(rad(b.longitude - a.longitude) / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Real places of this kind within radiusKm, wheelchair access first (yes, limited, unknown), nearest first.
+ * "no", nameless results and look-alikes (a street called "Pharmacy Road") are left out. Exported for tests.
+ */
+export function rankPlaces(results, origin, kind, radiusKm, limit = 8) {
+  const [, category, type] = KINDS[kind];
+  return results
+    .filter((r) => r.name && r.category === category && type.test(r.type) && r.extratags?.wheelchair !== 'no')
+    .map((r) => {
+      const t = r.extratags || {}, a = r.address || {}, at = { latitude: Number(r.lat), longitude: Number(r.lon) };
+      const address = [a.house_number, a.road].filter(Boolean).join(' ') || a.suburb || '';
+      return {
+        name: r.name, wheelchair: RANK[t.wheelchair] === undefined ? 'unknown' : t.wheelchair,
+        distance_km: Math.round(distanceKm(origin, at) * 100) / 100,
+        ...(address && { address }), ...(t.phone && { phone: t.phone }), ...(t.opening_hours && { opening_hours: t.opening_hours }),
+        map: `https://www.openstreetmap.org/?mlat=${at.latitude}&mlon=${at.longitude}#map=18/${at.latitude}/${at.longitude}`,
+      };
+    })
+    .filter((p) => p.distance_km <= radiusKm)
+    .sort((a, b) => RANK[a.wheelchair] - RANK[b.wheelchair] || a.distance_km - b.distance_km)
+    .slice(0, limit);
+}
+
+const plural = (w) => (w === 'police' ? 'police stations' : /s$/.test(w) ? w : w.endsWith('y') ? `${w.slice(0, -1)}ies` : `${w}s`);
+const named = (list) => list.map((p) => `${p.name} (${p.distance_km} km)`).join(', ');
+
+/**
+ * What the data says, in plain words, for Maya to read out. The small model once "remembered" a famous hospital
+ * with step-free access that the map did not have, so the answer is built here, from the results only. Exported for tests.
+ */
+export function placesSummary(places, kind, where, radiusKm) {
+  const pl = plural(KINDS[kind][0]);
+  if (!places.length) return `No ${pl} found within ${radiusKm} km of ${where} on OpenStreetMap. Offer a bigger radius.`;
+  const yes = places.filter((p) => p.wheelchair === 'yes'), part = places.filter((p) => p.wheelchair === 'limited');
+  let s = `Found ${places.length} ${places.length === 1 ? KINDS[kind][0] : pl} within ${radiusKm} km of ${where}.`;
+  if (yes.length) s += ` ${yes.length} ${yes.length === 1 ? 'has' : 'have'} step-free (wheelchair) access recorded: ${named(yes)}.`;
+  if (part.length) s += ` ${named(part)} ${part.length === 1 ? 'is' : 'are'} partly accessible.`;
+  if (!yes.length && !part.length) return `${s} None has wheelchair access recorded in OpenStreetMap, so call ahead to check. Nearest: ${named(places.slice(0, 3))}.`;
+  return yes.length + part.length < places.length ? `${s} The others have no access information: call ahead.` : s;
+}
+
+/** Up to 8 places of this kind near a named place, wheelchair-accessible ones first. */
+export async function findAccessible({ kind, near, radiusKm = 3 }, { fetchFn = fetch } = {}) {
+  const geo = await (await fetchFn(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(near)}`, { signal: AbortSignal.timeout(15_000) })).json();
+  const spot = geo.results?.[0];
+  if (!spot) throw new Error(`Couldn't find the place "${near}". Ask the user for a nearby town or city name.`);
+  const radius = Math.min(Math.max(Number(radiusKm) || 3, 0.5), 10);
+  const res = await fetchFn(searchUrl(kind, spot.latitude, spot.longitude, radius), { headers: HEADERS, signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) throw new Error(`The map service is busy (error ${res.status}). Try again in a minute.`);
+  const places = rankPlaces(await res.json(), spot, kind, radius);
+  const where = [spot.name, spot.admin1].filter(Boolean).join(', ');
+  return {
+    summary: placesSummary(places, kind, where, radius), places,
+    how: 'Answer from "summary" only. Never add a place that is not in "places", even one you know; never call a place (or a list) "wheelchair-accessible" unless its wheelchair is "yes", even if the user asked for accessible ones. Distances are straight-line; "unknown" access = call ahead.',
+  };
+}
 ```
 
 ### src/main/services/timers.js
@@ -15015,6 +15375,7 @@ export async function interpretTurn(audio, lang, { ml, complete }) {
 // People and feelings: a contact book for calls and WhatsApp by voice, and a spoken diary with moods.
 import { now } from '../store.js';
 import { matchApp } from '../services/pc.js';
+import { SOS_DEFAULTS, MEDICAL_FIELDS, medicalLines } from '../services/sos.js';
 
 const str = (description) => ({ type: 'string', description });
 const obj = (properties, required = []) => ({ type: 'object', properties, required });
@@ -15046,6 +15407,20 @@ export function findContact(store, who) {
 const notFound = (store, who) => ({ error: `No contact called "${who}". Saved: ${store.all('SELECT name FROM contacts WHERE deleted = 0').map((c) => c.name).join(', ') || 'none yet'}. Add one with contacts_add.` });
 
 export const peopleTools = [
+  {
+    name: 'medical_id',
+    description: 'The user\'s Medical ID (blood group, allergies, conditions, medicines, doctor): shown on the SOS help sign and emailed to caregivers in an emergency. '
+      + 'Call with the fields the user just told you to save them; call with nothing to read it out.',
+    parameters: obj(Object.fromEntries(MEDICAL_FIELDS.map(([k, label]) => [k, str(`${label} as the user said it${k === 'doctor' ? ' (name and phone)' : ''}`)]))),
+    run: (args, { store }) => {
+      const sos = { ...SOS_DEFAULTS, ...store.getSetting('sos', SOS_DEFAULTS) };
+      const given = Object.fromEntries(MEDICAL_FIELDS.map(([k]) => [k, args[k]]).filter(([, v]) => String(v ?? '').trim()));
+      if (Object.keys(given).length) store.setSetting('sos', { ...sos, medical: { ...sos.medical, ...given } });
+      const medical = medicalLines({ ...sos.medical, ...given });
+      return { medical, ...(Object.keys(given).length && { saved: Object.keys(given) }),
+        note: medical.length ? 'Shown on the SOS help sign and sent to caregivers in an emergency. Read it back to the user.' : 'Nothing saved yet: ask for blood group, allergies, conditions, medicines and doctor.' };
+    },
+  },
   {
     name: 'contacts_add',
     description: 'Save a contact (name, phone, optional email and relation like "amma", "brother", "doctor") so the user can call or WhatsApp them by voice. Only saves: never call or message them unless the user asked.',
@@ -16268,7 +16643,7 @@ const MODULES = [
       'src/main/services/holdkeys.js', 'src/main/services/dictate.js',
       'src/renderer/shared/voicecommands.js', 'src/main/services/voicecontrol.js', 'src/renderer/overlay.html', 'src/renderer/overlay.jsx',
       'src/renderer/app/Accessibility.jsx', 'src/main/services/scanning.js', 'src/main/services/keyboard.js', 'src/renderer/keyboard.html', 'src/renderer/keyboard.jsx',
-      'src/main/services/sos.js', 'src/renderer/sos.html', 'src/renderer/sos.jsx', 'src/main/services/session.js', 'src/main/services/chatbots.js', 'src/renderer/shared/MicButton.jsx',
+      'src/main/services/sos.js', 'src/main/services/telegram.js', 'src/renderer/sos.html', 'src/renderer/sos.jsx', 'src/main/services/session.js', 'src/main/services/chatbots.js', 'src/renderer/shared/MicButton.jsx',
       'src/renderer/app.html', 'src/renderer/app.jsx', 'src/renderer/app.css', 'src/renderer/shared/base.css', 'src/renderer/app/Chat.jsx', 'src/renderer/app/Home.jsx']],
   ['2. Supervisor Orchestration Core', 'Understands the request, picks the model, chooses tools, plans multi-step goals (Agent and Builder modes) and runs workflows.',
     ['src/main/brain.js', 'src/main/models.js', 'src/main/personality.js', 'src/main/providers.js', 'src/main/ollama.js', 'src/main/tools/index.js', 'src/main/tools/select.js', 'src/main/services/skills.js', 'src/main/services/learning.js', 'src/main/services/worklog.js', 'src/main/tools/maya.js', 'src/renderer/app/Skills.jsx', 'src/renderer/app/Monitor.jsx', 'src/renderer/app/Agent.jsx', 'src/renderer/app/Connections.jsx', 'src/renderer/app/Brain.jsx', 'src/renderer/shared/work.js',
@@ -16296,7 +16671,7 @@ const MODULES = [
   ['10. Helpers', 'Memory, web, smart search, screen snip, clipboard history, live captions, health breaks, extras.',
     ['src/main/tools/assistant.js', 'src/main/tools/extras.js', 'src/main/services/web.js', 'src/main/services/search.js', 'src/main/services/clipboard.js',
       'src/main/services/health.js', 'src/renderer/app/Search.jsx', 'src/renderer/snip.html', 'src/renderer/snip.jsx', 'src/renderer/captions.html', 'src/renderer/captions.jsx',
-      'src/main/tools/everyday.js', 'src/main/services/timers.js', 'src/renderer/prompter.html', 'src/renderer/prompter.jsx', 'src/renderer/shared/prompter.js',
+      'src/main/tools/everyday.js', 'src/main/services/places.js', 'src/main/services/timers.js', 'src/renderer/prompter.html', 'src/renderer/prompter.jsx', 'src/renderer/shared/prompter.js',
       'src/renderer/camera.html', 'src/renderer/camera.js', 'src/main/services/interpreter.js', 'src/main/tools/people.js']],
   ['11. Data, security and settings', 'SQLite storage, encrypted secrets, PIN lock, backup, theme.',
     ['src/main/paths.js', 'src/main/store.js', 'src/main/secrets.js', 'src/main/security.js', 'src/main/backup.js', 'src/main/theme.js',
@@ -16909,6 +17284,23 @@ const { ask } = await import('../src/main/brain.js');
 const { OLLAMA } = await import('../src/main/ollama.js');
 
 const running = await fetch(`${OLLAMA}/api/version`).then((r) => r.ok, () => false);
+const has9b = running && (await fetch(`${OLLAMA}/api/tags`).then((r) => r.json()).then((d) => d.models.some((m) => /^ather-smart/.test(m.name)), () => false));
+
+/** The model ask() ends up using for this sentence (its last "model" event; stopped before the model runs). */
+async function modelFor(text) {
+  const { allTools } = await import('../src/main/tools/index.js');
+  const stop = new AbortController();
+  let key = null;
+  await ask({ text, store: openStore(':memory:'), tools: allTools, services: {}, signal: stop.signal,
+    onEvent: (e) => { if (e.type === 'model') { key = e.key; stop.abort(); } } }).catch(() => {});
+  return key;
+}
+
+test('mouse-and-keyboard jobs get the 9B brain; plain questions stay fast', { skip: !has9b && 'ather-smart (9B) not installed' }, async () => {
+  assert.equal(await modelFor('Open the Calculator app and use the mouse and keyboard in it to work out 12 times 7'), 'smart');
+  assert.equal(await modelFor('click the save button'), 'smart');
+  assert.equal(await modelFor('set volume to 30'), 'fast');
+});
 
 test('brain turns a sentence into a task and answers', { skip: !running && 'Ollama not running', timeout: 300_000 }, async () => {
   const store = openStore(':memory:');
@@ -17135,7 +17527,11 @@ test('the pill and eye sliders walk the colour wheel; shade darkens', () => {
 // Computer control through Windows UI Automation on a real app: Notepad.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+
+/** Notepad process ids now (the user's own Notepad must never be typed into or closed). */
+const notepadPids = () => execFileSync('powershell.exe', ['-NoProfile', '-Command', '(Get-Process notepad -ErrorAction SilentlyContinue).Id'], { encoding: 'utf8' })
+  .split(/\s+/).filter(Boolean).map(Number);
 import { createPc } from '../src/main/services/pc.js';
 import { computerTools, createComputerSession, toSendKeys, cellCenter, annotate } from '../src/main/tools/computer.js';
 
@@ -17173,7 +17569,9 @@ test('computer tools refuse to act before the user allows it', async () => {
   assert.ok(computerTools.find((t) => t.name === 'computer_start').confirm);
 });
 
-test('controls Notepad: finds the text area by UI Automation and types into it', { timeout: 120_000 }, async () => {
+test('controls Notepad: finds the text area by UI Automation and types into it', { timeout: 120_000 }, async (t) => {
+  // Windows 11 opens a new Notepad as a tab of the open one, so with the user's Notepad open the test would type into it.
+  if (notepadPids().length) { t.skip('Notepad is already open (the user\'s): not touching it'); return; }
   const pc = createPc({ shell: { openPath: async () => '' } });
   const services = { pc, computer: createComputerSession() };
   const run = (name, args = {}) => computerTools.find((t) => t.name === name).run(args, { services });
@@ -17200,7 +17598,7 @@ test('controls Notepad: finds the text area by UI Automation and types into it',
     run('computer_done', { summary: 'typed' });
     assert.equal(services.computer.active, false);
   } finally {
-    execFile('taskkill.exe', ['/IM', 'notepad.exe', '/F']);
+    for (const pid of notepadPids()) execFile('taskkill.exe', ['/PID', String(pid), '/F']); // none was open before this test
     pc.stop();
   }
 });
@@ -18488,6 +18886,118 @@ test('contacts are found however a small model writes the name', () => {
 });
 ```
 
+### test/places.test.js
+
+```javascript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+process.env.ATHER_DATA = mkdtempSync(join(tmpdir(), 'maya-places-'));
+const { openStore } = await import('../src/main/store.js');
+const places = await import('../src/main/services/places.js');
+const { searchUrl, rankPlaces, findAccessible, KINDS } = places;
+const { allTools } = await import('../src/main/tools/index.js');
+const { selectTools } = await import('../src/main/tools/select.js');
+
+const CHENNAI = { latitude: 13.0827, longitude: 80.2707 };
+// Nominatim (jsonv2 + extratags + addressdetails) results.
+const hit = (name, wheelchair, lat, lon, extra = {}, type = 'pharmacy', category = 'amenity') =>
+  ({ name, category, type, lat: String(lat), lon: String(lon), extratags: { ...(wheelchair ? { wheelchair } : {}), ...extra.tags }, address: extra.address || {} });
+const RESULTS = [
+  hit('Far Accessible Pharmacy', 'yes', 13.10, 80.27),
+  hit('Near Unknown Pharmacy', null, 13.0830, 80.2710),
+  hit('Steps Only Pharmacy', 'no', 13.0828, 80.2708),
+  hit('Near Accessible Pharmacy', 'yes', 13.0840, 80.2720, { tags: { phone: '+91 44 1234', opening_hours: '24/7' }, address: { house_number: '12', road: 'Anna Salai' } }),
+  hit('Ramp Pharmacy', 'limited', 13.0835, 80.2715),
+  hit('Pharmacy Road', null, 13.0829, 80.2709, {}, 'residential', 'highway'), // a street named "pharmacy", not a pharmacy
+  hit('', null, 13.083, 80.271), // no name: useless to the user
+  hit('Out Of Range Pharmacy', 'yes', 13.20, 80.27), // inside the square box, beyond the radius
+];
+
+test('the search asks for that kind of place in a box around the point', () => {
+  const u = new URL(searchUrl('pharmacy', 13.08, 80.27, 3));
+  assert.equal(u.host, 'nominatim.openstreetmap.org');
+  assert.equal(u.searchParams.get('q'), 'pharmacy');
+  assert.equal(u.searchParams.get('bounded'), '1');
+  assert.equal(u.searchParams.get('extratags'), '1');
+  const [w, n, e, s] = u.searchParams.get('viewbox').split(',').map(Number);
+  assert.ok(w < 80.27 && e > 80.27 && s < 13.08 && n > 13.08);
+  assert.ok(Math.abs(n - 13.08 - 3 / 111) < 0.001, 'about 3 km north');
+  assert.equal(new URL(searchUrl('bus_stop', 1, 2, 1)).searchParams.get('q'), 'bus stop');
+  assert.throws(() => searchUrl('casino', 1, 2, 1), /kind/);
+  for (const k of ['hospital', 'pharmacy', 'toilets', 'restaurant', 'train_station']) assert.ok(KINDS[k], k);
+});
+
+test('wheelchair access first, then distance; wrong kinds, inaccessible, nameless and far places are left out', () => {
+  const ranked = rankPlaces(RESULTS, CHENNAI, 'pharmacy', 3);
+  assert.deepEqual(ranked.map((p) => p.name), ['Near Accessible Pharmacy', 'Far Accessible Pharmacy', 'Ramp Pharmacy', 'Near Unknown Pharmacy']);
+  assert.deepEqual(ranked.map((p) => p.wheelchair), ['yes', 'yes', 'limited', 'unknown']);
+  const top = ranked[0];
+  assert.equal(top.address, '12 Anna Salai');
+  assert.equal(top.phone, '+91 44 1234');
+  assert.equal(top.opening_hours, '24/7');
+  assert.ok(top.distance_km > 0 && top.distance_km < 1, String(top.distance_km));
+  assert.match(top.map, /^https:\/\/www\.openstreetmap\.org\/\?mlat=/);
+  assert.equal(rankPlaces(Array.from({ length: 20 }, (_, i) => hit(`P${i}`, 'yes', 13.08 + i / 1000, 80.27)), CHENNAI, 'pharmacy', 3).length, 8);
+});
+
+test('finds places through the geocoder and the map search', async () => {
+  const calls = [];
+  const fetchFn = async (url, opts = {}) => {
+    calls.push(String(url));
+    if (String(url).includes('geocoding')) return { ok: true, json: async () => ({ results: [{ name: 'Chennai', admin1: 'Tamil Nadu', ...CHENNAI }] }) };
+    assert.match(opts.headers?.['User-Agent'] || '', /Maya/, 'OpenStreetMap asks apps to name themselves');
+    return { ok: true, json: async () => RESULTS };
+  };
+  const r = await findAccessible({ kind: 'pharmacy', near: 'Chennai', radiusKm: 3 }, { fetchFn });
+  assert.match(r.summary, /within 3 km of Chennai, Tamil Nadu/);
+  assert.equal(r.places[0].name, 'Near Accessible Pharmacy');
+  assert.match(r.how, /never add a place/i);
+  assert.equal(calls.length, 2);
+  const nowhere = async () => ({ ok: true, json: async () => ({ results: [] }) });
+  await assert.rejects(findAccessible({ kind: 'pharmacy', near: 'Qwxzzy' }, { fetchFn: nowhere }), /Couldn't find the place "Qwxzzy"/);
+  const down = async (url) => (String(url).includes('geocoding') ? { ok: true, json: async () => ({ results: [CHENNAI] }) } : { ok: false, status: 503, json: async () => ({}) });
+  await assert.rejects(findAccessible({ kind: 'pharmacy', near: 'Chennai' }, { fetchFn: down }), /map service is busy/);
+});
+
+test('the summary says plainly what is known, so Maya cannot invent an accessible place', () => {
+  const { placesSummary } = places;
+  const ranked = rankPlaces(RESULTS, CHENNAI, 'pharmacy', 3);
+  const s = placesSummary(ranked, 'pharmacy', 'Chennai, Tamil Nadu', 3);
+  assert.match(s, /^Found 4 pharmacies within 3 km of Chennai, Tamil Nadu\./);
+  assert.match(s, /2 have step-free \(wheelchair\) access recorded: Near Accessible Pharmacy \(0\.\d+ km\), Far Accessible Pharmacy/);
+  assert.match(s, /Ramp Pharmacy .* partly accessible/);
+  const none = placesSummary(rankPlaces(RESULTS.filter((r) => !r.extratags.wheelchair), CHENNAI, 'pharmacy', 3), 'pharmacy', 'Chennai', 3);
+  assert.match(none, /None has wheelchair access recorded/);
+  assert.match(none, /Nearest: Near Unknown Pharmacy \(0\.\d+ km\)/);
+  assert.match(none, /call ahead/);
+  assert.match(placesSummary([], 'hospital', 'Ooty', 2), /^No hospitals found within 2 km of Ooty/);
+});
+
+test('the tool asks for a place when it knows none, and uses the saved city otherwise', async () => {
+  const tool = allTools.find((t) => t.name === 'places_accessible');
+  assert.ok(tool, 'places_accessible is registered');
+  const store = openStore(':memory:');
+  const r = await tool.run({ kind: 'hospital' }, { store, services: {} });
+  assert.match(r.ask_user, /which town or area/i);
+  store.setSetting('city', 'Qwxzzy');
+  const seen = [];
+  const fetchFn = async (url) => { seen.push(String(url)); return { ok: true, json: async () => ({ results: [] }) }; };
+  await assert.rejects(tool.run({ kind: 'hospital' }, { store, services: { fetch: fetchFn } }), /Qwxzzy/);
+  assert.match(seen[0], /Qwxzzy/);
+});
+
+test('accessibility and "near me" requests reach the tool', () => {
+  const names = (t) => selectTools(allTools, t).map((x) => x.name);
+  for (const t of ['find a wheelchair accessible pharmacy near me', 'nearest hospital', 'accessible toilets in Chennai', 'is there a cafe nearby with a ramp'])
+    assert.ok(names(t).includes('places_accessible'), t);
+  assert.ok(!names('what is an API?').includes('places_accessible'));
+});
+```
+
 ### test/power.test.js
 
 ```javascript
@@ -18588,6 +19098,16 @@ const { productivityTools } = await import('../src/main/tools/productivity.js');
 
 const store = openStore(':memory:');
 const call = (name, args = {}) => productivityTools.find((t) => t.name === name).run(args, { store });
+
+test('a reminder can be set some days ahead without date maths (9 am that day)', () => {
+  const day = new Date();
+  day.setDate(day.getDate() + 2);
+  const ymd = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  const r = call('reminders_create', { text: 'Refill BP tablets', in_days: 2, care: true });
+  assert.equal(r.at, `${ymd}T09:00`);
+  assert.equal(call('reminders_create', { text: 'exact', at: '2026-12-01T18:30', in_days: 5 }).at, '2026-12-01T18:30', 'an exact time wins');
+  assert.throws(() => call('reminders_create', { text: 'when?' }), /at or in_days/);
+});
 
 test('task lifecycle with undo', () => {
   const t = call('tasks_create', { title: 'Study DBMS', due: '2026-10-29T17:00' });
@@ -18725,6 +19245,13 @@ test('switching endpoints: a custom OpenAI-compatible provider really answers, u
     assert.equal(usage[0].provider, 'mylocal');
     assert.ok(usage[0].prompt_tokens > 0);
   });
+
+test('private tools (screen, files, mail, contacts, health) are never offered to cloud models', async () => {
+  const { CLOUD_PRIVATE } = await import('../src/main/brain.js');
+  for (const name of ['screen_look', 'fs_read', 'mail_read', 'contacts_query', 'diary_add', 'medical_id', 'camera_look'])
+    assert.ok(CLOUD_PRIVATE.test(name), name);
+  assert.ok(!CLOUD_PRIVATE.test('web_search'));
+});
 
 test('cloud models do not get screen, files or documents unless allowed', { skip: !running && 'Ollama not running', timeout: 300_000 }, async () => {
   const store = openStore(':memory:');
@@ -18888,6 +19415,19 @@ test('requests pull in the tools they need', () => {
   assert.ok(names("what's on my screen").includes('screen_look'));
   assert.ok(names('how much time did I spend on youtube today').includes('activity_query'));
   assert.ok(names('what is this?', { images: 1 }).includes('images_blur'));
+});
+
+test('asking Maya to use the mouse and keyboard in an app offers computer control', () => {
+  for (const text of [
+    'Open the Calculator app and use the mouse and keyboard in it to work out 12 times 7',
+    'open calculator and calculate 12 times 7',
+    'use my keyboard and mouse to rename this file',
+    'using the mouse, drag the window to the left',
+    'open paint and draw a circle',
+  ]) assert.ok(names(text).includes('computer_start'), text);
+  // A plain sum is answered, not done by clicking around an app.
+  assert.ok(!names('what is 12 times 7?').includes('computer_start'));
+  assert.ok(!names('my mouse is not working, what should I do?').includes('computer_start'));
 });
 
 test('a follow-up keeps the tools of the previous request', () => {
@@ -19311,6 +19851,87 @@ test('nod = yes, shake = no; steering the pointer is neither', async () => {
 });
 ```
 
+### test/skills-learn.test.js
+
+```javascript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+process.env.ATHER_DATA = mkdtempSync(join(tmpdir(), 'maya-learn-'));
+const { openStore } = await import('../src/main/store.js');
+const { learnSkill, jobSteps, saveSkill } = await import('../src/main/services/skills.js');
+
+const ok = (name, args = {}) => ({ name, args, result: {} });
+// Not covered by a built-in skill ("Download from a chat" is WhatsApp), so only learning can handle it.
+const QUESTION = 'grab the clip Ravi sent me in Telegram and put it in Videos';
+const JOB = [
+  ok('agent_plan', { steps: ['open chat', 'download', 'move'] }),
+  ok('whatsapp_open_chat', { who: 'Ravi' }),
+  ok('computer_start', { task: 'save the video' }),
+  ok('computer_look'),
+  ok('computer_click', { element: 12 }),
+  ok('downloads_latest', { kind: 'video' }),
+  ok('fs_move', { from: 'C:/Users/x/Downloads/v.mp4', to: 'desktop' }),
+];
+const WRITTEN = { name: 'Save a chat video', when: 'save or download a video from a WhatsApp chat to the desktop', steps: '1. Open the chat the user names.\n2. Download the newest video.\n3. Move it to the desktop.' };
+// A stand-in for the local model: records the prompt and answers with fixed JSON.
+const model = (reply = WRITTEN) => {
+  const fake = async (prompt, opts) => { fake.prompt = prompt; fake.opts = opts; return typeof reply === 'string' ? reply : JSON.stringify(reply); };
+  return fake;
+};
+
+test('job steps leave out planning, failed and refused calls', () => {
+  const steps = jobSteps([...JOB, { name: 'fs_move', args: {}, result: { error: 'busy' } }, { name: 'mail_send', args: {}, result: { denied: true } }]);
+  assert.deepEqual(steps.map((s) => s.name), ['whatsapp_open_chat', 'computer_start', 'computer_look', 'computer_click', 'downloads_latest', 'fs_move']);
+});
+
+test('a finished multi-step job becomes a skill offer, with only the tools it used', async () => {
+  const store = openStore(':memory:');
+  assert.equal((await import('../src/main/services/skills.js')).matchSkill(store, QUESTION), null, 'no skill fits this request yet');
+  const complete = model({ ...WRITTEN, tools: '.*' });
+  const skill = await learnSkill(store, QUESTION, JOB, complete);
+  assert.equal(skill.name, 'Save a chat video');
+  assert.equal(skill.when, WRITTEN.when);
+  assert.match(skill.steps, /^1\. Open the chat/);
+  assert.equal(skill.tools, '^(whatsapp_open_chat|computer_start|computer_look|computer_click|downloads_latest|fs_move)$');
+  assert.match(complete.prompt, /computer_click/);
+  assert.ok(complete.opts?.format, 'asks the model for JSON');
+  assert.equal(store.get('SELECT COUNT(*) AS n FROM skills WHERE name = ?', skill.name).n, 0, 'nothing is saved before the user agrees');
+});
+
+test('no offer for short, failed, refused or already-known jobs', async () => {
+  const store = openStore(':memory:');
+  const never = model();
+  const cases = {
+    'only lookups': [ok('web_search'), ok('web_read'), ok('web_read'), ok('files_make_document')],
+    'one tool repeated': [ok('computer_click'), ok('computer_click'), ok('computer_click')],
+    'refused step': [...JOB, { name: 'computer_keys', args: {}, result: { denied: true } }],
+    'last step failed': [...JOB, { name: 'fs_move', args: {}, result: { error: 'File not found' } }],
+  };
+  for (const [why, log] of Object.entries(cases)) assert.equal(await learnSkill(store, QUESTION, log, never), null, why);
+  assert.equal(await learnSkill(store, 'make me a presentation about cloud computing with nice slides', JOB, never), null, 'a skill already fits');
+  assert.equal(await learnSkill(store, 'save it', JOB, never), null, 'too short to name a job');
+  assert.equal(never.prompt, undefined, 'the model is not even asked');
+});
+
+test('a bad or duplicate answer from the model is dropped', async () => {
+  const store = openStore(':memory:');
+  assert.equal(await learnSkill(store, QUESTION, JOB, model('not json')), null);
+  assert.equal(await learnSkill(store, QUESTION, JOB, model({ name: '', when: 'x', steps: 'y' })), null);
+  saveSkill(store, { name: 'save a chat video', when: 'old', steps: 'old steps' });
+  assert.equal(await learnSkill(store, QUESTION, JOB, model()), null, 'same name as a saved skill');
+});
+
+test('secrets in the request or the steps are never learned', async () => {
+  const store = openStore(':memory:');
+  assert.equal(await learnSkill(store, 'log in to my bank with password Xk9#mP2qL7 and pay the bill', JOB, model()), null);
+  assert.equal(await learnSkill(store, QUESTION, JOB, model({ ...WRITTEN, steps: 'Type the OTP 482913 then press enter' })), null);
+});
+```
+
 ### test/skills.test.js
 
 ```javascript
@@ -19328,9 +19949,10 @@ const { selectTools } = await import('../src/main/tools/select.js');
 
 test('built-in skills only name tools that exist', () => {
   const names = allTools.map((t) => t.name);
+  const params = new Set(allTools.flatMap((t) => Object.keys(t.parameters?.properties || {}))); // e.g. in_days
   for (const [skill, , steps, tools] of BUILTIN) {
     assert.ok(names.some((n) => new RegExp(tools).test(n)), `${skill}: ${tools}`);
-    for (const used of steps.match(/\b[a-z]+_[a-z_]+\b/g) || []) assert.ok(names.includes(used), `${skill} mentions ${used}`);
+    for (const used of steps.match(/\b[a-z]+_[a-z_]+\b/g) || []) assert.ok(names.includes(used) || params.has(used), `${skill} mentions ${used}`);
   }
 });
 
@@ -19340,6 +19962,10 @@ test('the right skill is picked, and ordinary questions get none', () => {
   assert.equal(matchSkill(store, 'make me a presentation about cloud computing')?.name, 'Presentation maker');
   assert.equal(matchSkill(store, 'plan a trip to Ooty for my family')?.name, 'Trip plan');
   assert.equal(matchSkill(store, 'build a calculator website')?.name, 'Build me an app');
+  assert.equal(matchSkill(store, 'make me an app for my shop')?.name, 'Build me an app');
+  // "the Calculator app" names an app that exists: opening or using it is not building one.
+  for (const t of ['Open the Calculator app and use the mouse and keyboard in it to work out 12 times 7', 'type hello in the Notes app', 'launch the camera app'])
+    assert.notEqual(matchSkill(store, t)?.name, 'Build me an app', t);
   assert.equal(matchSkill(store, 'what is the capital of France?'), null);
   assert.equal(matchSkill(store, 'hi'), null);
 });
@@ -19357,6 +19983,27 @@ test('a taught skill is used when its name is said; it can be switched off', () 
 test('"teach yourself" reaches the skill tools', () => {
   const names = selectTools(allTools, 'Teach yourself: when I say goodnight, turn on dark mode').map((t) => t.name);
   assert.ok(names.includes('skills_save'));
+});
+
+test('the accessibility skills are found from everyday words', () => {
+  const store = openStore(':memory:');
+  const cases = {
+    'Caregiver SOS': ['I need help, call my caregiver', 'I fell down, get help'],
+    'Refill medicines': ['my BP tablets are running out', 'remind me to refill my medicine'],
+    'Read it to me': ['read this page to me slowly', 'read what is on my screen aloud'],
+    'Fill a form for me': ['fill this form for me', 'help me fill in the form on the screen'],
+    'Tired or in pain': ["I'm tired today and my hands hurt", 'I have low energy, please make things easier'],
+  };
+  for (const [skill, phrases] of Object.entries(cases)) for (const p of phrases) assert.equal(matchSkill(store, p)?.name, skill, p);
+  // One shared word must not pull these in: a plain call, a medicine reminder, a mood, dark mode, homework help.
+  for (const p of ['call Amma', 'remind me to take my medicine at 8pm', "I'm feeling happy", 'turn on dark mode', 'help me with my homework'])
+    assert.ok(!Object.keys(cases).includes(matchSkill(store, p)?.name), `${p} → ${matchSkill(store, p)?.name}`);
+});
+
+test('the form skill never types secrets itself', () => {
+  const form = BUILTIN.find(([name]) => name === 'Fill a form for me');
+  assert.match(form[2], /never type passwords, card numbers, OTPs/i);
+  assert.match(form[2], /read .*back.*before/i);
 });
 
 test('everyday sentences do not trigger a skill', () => {
@@ -19378,7 +20025,9 @@ import nodemailer from 'nodemailer';
 
 process.env.ATHER_DATA = mkdtempSync(join(tmpdir(), 'ather-test-'));
 const { openStore } = await import('../src/main/store.js');
-const { createSos, sosEmail } = await import('../src/main/services/sos.js');
+const { createSos, sosEmail, medicalLines } = await import('../src/main/services/sos.js');
+const { allTools } = await import('../src/main/tools/index.js');
+const { selectTools } = await import('../src/main/tools/select.js');
 
 const setup = (sos = {}) => {
   const store = openStore(':memory:');
@@ -19402,6 +20051,44 @@ test('SOS: countdown, then alarm and an email to every caregiver', async () => {
   assert.match(sent[0].subject, /SOS: Ronald needs help/);
   assert.match(sent[0].text, /Insulin is in the fridge/);
   assert.equal(store.getSetting('sosLog')[0].sent, 2);
+});
+
+test('Medical ID: only filled-in fields, in a fixed order', () => {
+  assert.deepEqual(medicalLines({ allergies: 'Penicillin', blood: 'O+', doctor: '', conditions: '  ' }), ['Blood group: O+', 'Allergies: Penicillin']);
+  assert.deepEqual(medicalLines(undefined), []);
+  const mail = sosEmail({ name: 'Ronald', note: '', reason: 'x', at: new Date(), medical: { blood: 'O+', medicines: 'Insulin 10 units at 8 am' } });
+  assert.match(mail.text, /Medical ID:\n- Blood group: O\+\n- Medicines: Insulin 10 units at 8 am/);
+  assert.doesNotMatch(sosEmail({ name: 'R', note: '', reason: 'x', at: new Date() }).text, /Medical ID/);
+});
+
+test('SOS: the help sign and the email carry the Medical ID', async () => {
+  const store = openStore(':memory:');
+  store.setSetting('sos', { contacts: ['amma@example.com'], name: 'Ronald', medical: { blood: 'B-', allergies: 'Peanuts' } });
+  const shown = [], sent = [];
+  const transport = { sendMail: async (m) => { sent.push(m); } };
+  const sos = createSos({ store, secrets: { get: () => null }, transport, countdownMs: 20, onState: (s) => shown.push(s) });
+  sos.trigger('test');
+  await wait(400);
+  assert.equal(shown.at(-1).state, 'alarm');
+  assert.deepEqual(shown.at(-1).medical, ['Blood group: B-', 'Allergies: Peanuts']);
+  assert.match(sent[0].text, /Allergies: Peanuts/);
+});
+
+test('Medical ID by voice: saves what was said, keeps the rest and the other SOS settings', async () => {
+  const tool = allTools.find((t) => t.name === 'medical_id');
+  assert.ok(tool, 'medical_id is registered');
+  const store = openStore(':memory:');
+  store.setSetting('sos', { contacts: ['amma@example.com'], name: 'Ronald' });
+  const empty = await tool.run({}, { store });
+  assert.match(empty.note, /nothing saved yet/i);
+  await tool.run({ blood: 'O+', allergies: 'Penicillin' }, { store });
+  const r = await tool.run({ medicines: 'Metformin 500 mg twice a day' }, { store });
+  assert.deepEqual(r.medical, ['Blood group: O+', 'Allergies: Penicillin', 'Medicines: Metformin 500 mg twice a day']);
+  assert.deepEqual(store.getSetting('sos').contacts, ['amma@example.com'], 'other SOS settings are kept');
+  const cleared = await tool.run({ allergies: 'none' }, { store });
+  assert.ok(cleared.medical.includes('Allergies: none'), 'saying "none" is kept: it tells a doctor something');
+  for (const t of ['my blood group is O positive', 'what are my allergies?', 'show my medical ID'])
+    assert.ok(selectTools(allTools, t).some((x) => x.name === 'medical_id'), t);
 });
 
 test('SOS: cancelling during the countdown sends nothing', async () => {
@@ -19518,6 +20205,128 @@ test('health breaks count only active minutes and respect quiet time', () => {
 test('health_settings changes intervals', () => {
   const store = openStore(':memory:');
   assert.deepEqual(runner(store)('health_settings', { water_minutes: 0, eyes_minutes: 30 }), { water: 0, eyes: 30, stretch: 45 });
+});
+```
+
+### test/telegram.test.js
+
+```javascript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+process.env.ATHER_DATA = mkdtempSync(join(tmpdir(), 'maya-telegram-'));
+const { openStore } = await import('../src/main/store.js');
+const { createTelegram, splitMessage } = await import('../src/main/services/telegram.js');
+
+const TOKEN = '123456:FAKE-token_for-tests';
+/** A fake Telegram Bot API: queued updates in, sent messages out. */
+function fakeTelegram({ valid = true } = {}) {
+  const t = { queue: [], sent: [], offsets: [], valid, nextId: 1 };
+  t.fetch = async (url, opts = {}) => {
+    const m = /\/bot([^/]+)\/(\w+)$/.exec(String(url));
+    assert.ok(m, String(url));
+    if (!t.valid || m[1] !== TOKEN) return { ok: false, status: 401, json: async () => ({ ok: false, description: 'Unauthorized' }) };
+    const body = opts.body ? JSON.parse(opts.body) : {};
+    if (m[2] === 'getMe') return { ok: true, json: async () => ({ ok: true, result: { username: 'maya_test_bot' } }) };
+    if (m[2] === 'getUpdates') { t.offsets.push(body.offset); const result = t.queue.filter((u) => u.update_id >= (body.offset || 0)); t.queue = []; return { ok: true, json: async () => ({ ok: true, result }) }; }
+    if (m[2] === 'sendMessage') { t.sent.push(body); return { ok: true, json: async () => ({ ok: true, result: {} }) }; }
+    throw new Error(`unexpected ${m[2]}`);
+  };
+  t.say = (chatId, text, first_name = 'Rahul') => t.queue.push({ update_id: t.nextId++, message: { chat: { id: chatId }, from: { first_name }, text } });
+  return t;
+}
+const fakeSecrets = () => { const m = new Map(); return { get: (k) => m.get(k) ?? null, set: (k, v) => (v ? m.set(k, v) : m.delete(k)), map: m }; };
+
+async function setup({ answer = async (text) => `You said: ${text}` } = {}) {
+  const store = openStore(':memory:');
+  const secrets = fakeSecrets();
+  const tg = fakeTelegram();
+  const asked = [];
+  const bot = createTelegram({ store, secrets, fetchFn: tg.fetch, answer: async (text, ctx) => { asked.push(text); return answer(text, ctx); } });
+  await bot.setToken(TOKEN);
+  return { store, secrets, tg, asked, bot };
+}
+
+test('the token is checked with Telegram and kept encrypted, never in plain settings', async () => {
+  const { store, secrets, bot } = await setup();
+  assert.equal(secrets.get('telegram-token'), TOKEN);
+  assert.doesNotMatch(JSON.stringify(store.getSetting('telegram', {})), /FAKE-token/);
+  const s = bot.status();
+  assert.equal(s.bot, 'maya_test_bot');
+  assert.equal(s.paired, false);
+  assert.match(s.code, /^\d{6}$/);
+  const bad = createTelegram({ store: openStore(':memory:'), secrets: fakeSecrets(), fetchFn: fakeTelegram({ valid: false }).fetch, answer: async () => '' });
+  await assert.rejects(bad.setToken('999:wrong'), /Telegram did not accept this token/);
+});
+
+test('only the 6-digit code pairs a chat; then other chats get no answer at all', async () => {
+  const { tg, asked, bot } = await setup();
+  tg.say(5, 'hello');
+  await bot.pollOnce();
+  assert.equal(asked.length, 0, 'nothing is answered before pairing');
+  assert.match(tg.sent.at(-1).text, /6-digit code/);
+  tg.say(5, `/start ${bot.status().code}`);
+  await bot.pollOnce();
+  assert.equal(bot.status().paired, true);
+  assert.equal(bot.status().chat, 'Rahul');
+  assert.match(tg.sent.at(-1).text, /paired/i);
+  const before = tg.sent.length;
+  tg.say(9, 'what is on my calendar?', 'Stranger');
+  tg.say(9, bot.status().code || '000000', 'Stranger');
+  await bot.pollOnce();
+  assert.equal(tg.sent.length, before, 'a stranger gets no reply');
+  assert.equal(asked.length, 0);
+  tg.say(5, 'what is on my calendar?');
+  await bot.pollOnce();
+  assert.deepEqual(asked, ['what is on my calendar?']);
+  assert.equal(tg.sent.at(-1).chat_id, 5);
+  assert.equal(tg.sent.at(-1).text, 'You said: what is on my calendar?');
+});
+
+test('anything that needs approval is refused from the phone', async () => {
+  const { tg, bot } = await setup({ answer: async (text, { confirm }) => ((await confirm({ name: 'computer_start', args: {} })) ? 'done' : 'I could not do that.') });
+  tg.say(5, bot.status().code);
+  await bot.pollOnce();
+  tg.say(5, 'open notepad and type hello');
+  await bot.pollOnce();
+  assert.match(tg.sent.at(-1).text, /I could not do that\./);
+  assert.match(tg.sent.at(-1).text, /approve .* on the PC/i);
+});
+
+test('reminders reach the paired phone, and nothing is sent before pairing', async () => {
+  const { tg, bot } = await setup();
+  await bot.notify('⏰ Medicine time: BP tablet');
+  assert.equal(tg.sent.length, 0, 'not paired yet: nobody to send to');
+  tg.say(5, bot.status().code);
+  await bot.pollOnce();
+  await bot.notify('⏰ Medicine time: BP tablet');
+  assert.deepEqual(tg.sent.at(-1), { chat_id: 5, text: '⏰ Medicine time: BP tablet' });
+  tg.valid = false;
+  await bot.notify('offline reminder'); // must never throw into the reminder timer
+});
+
+test('each message is handled once, long answers are split, and a revoked token stops polling', async () => {
+  const { tg, asked, bot, secrets } = await setup({ answer: async () => 'x'.repeat(9000) });
+  tg.say(5, bot.status().code);
+  await bot.pollOnce();
+  tg.say(5, 'tell me a long story');
+  await bot.pollOnce();
+  await bot.pollOnce();
+  assert.equal(asked.length, 1);
+  assert.ok(tg.offsets.at(-1) > 1, 'the next poll asks only for newer messages');
+  const parts = tg.sent.filter((m) => /^x+$/.test(m.text));
+  assert.equal(parts.length, 3);
+  assert.ok(parts.every((p) => p.text.length <= 4096));
+  assert.deepEqual(splitMessage('a'.repeat(10)), ['a'.repeat(10)]);
+  tg.valid = false;
+  await bot.pollOnce();
+  assert.match(bot.status().error, /token/i);
+  bot.forget();
+  assert.equal(secrets.get('telegram-token'), null);
+  assert.equal(bot.status().configured, false);
 });
 ```
 

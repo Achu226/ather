@@ -1,5 +1,7 @@
 node_modules/
 dist/
 release/
+# page snapshots the Playwright browser tool saves while testing
+.playwright-mcp/
 # older copy of the project kept from the move
 /ather 2.0/
