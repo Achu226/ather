@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Maya captions</title>
+    <style>
+      html, body { margin: 0; background: transparent; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+      .cap { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; padding: 14px 44px 14px 20px;
+        background: rgba(12, 12, 16, 0.78); border-radius: 16px; color: #fff; -webkit-app-region: drag; box-sizing: border-box; }
+      .cap p { margin: 0; font-size: 18px; line-height: 1.35; color: rgba(255, 255, 255, 0.62); }
+      .cap p.now { font-size: 21px; color: #fff; font-weight: 600; }
+      .cap .status { font-size: 14px; color: #c9c3ff; }
+      .tag { position: absolute; top: 8px; left: 16px; font-size: 11px; color: #c9c3ff; letter-spacing: .04em; }
+      .x { position: absolute; top: 8px; right: 10px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(255,255,255,.14); color: #fff;
+        font-size: 13px; cursor: pointer; -webkit-app-region: no-drag; }
+      .x:hover { background: rgba(255,255,255,.28); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./captions.jsx"></script>
+  </body>
+</html>

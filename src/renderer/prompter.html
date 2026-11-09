@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Maya teleprompter</title>
+    <style>
+      html, body { margin: 0; background: transparent; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+      .tp { position: absolute; inset: 0; border-radius: 18px; background: rgba(8, 8, 12, .9); color: #fff; overflow: hidden; -webkit-app-region: drag; }
+      .scroll { position: absolute; left: 0; right: 0; top: 0; padding: 0 42px; transition: transform .6s cubic-bezier(.2,.7,.3,1); }
+      .scroll p { margin: 0; font-size: 34px; line-height: 1.45; font-weight: 600; }
+      .w { color: rgba(255,255,255,.35); transition: color .3s; }
+      .w.next { color: #fff; }
+      .w.now { color: #b9aeff; }
+      .fade { position: absolute; left: 0; right: 0; height: 40px; pointer-events: none; }
+      .fade.top { top: 0; background: linear-gradient(rgba(8,8,12,.95), transparent); }
+      .fade.bottom { bottom: 0; background: linear-gradient(transparent, rgba(8,8,12,.95)); }
+      .bar { position: absolute; right: 12px; top: 10px; display: flex; gap: 8px; align-items: center; color: #b9aeff; font-size: 13px; z-index: 2; }
+      .mic { width: 9px; height: 9px; border-radius: 50%; background: #555; }
+      .mic.on { background: #3ddc84; box-shadow: 0 0 8px #3ddc84; }
+      button { -webkit-app-region: no-drag; border: 0; border-radius: 8px; padding: 4px 10px; background: rgba(255,255,255,.16); color: #fff; font: inherit; cursor: pointer; }
+      button:hover { background: rgba(255,255,255,.3); }
+      @media (prefers-reduced-motion: reduce) { .scroll, .w { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./prompter.jsx"></script>
+  </body>
+</html>

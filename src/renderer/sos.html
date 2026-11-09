@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Maya SOS</title>
+    <style>
+      html, body, #root { margin: 0; height: 100%; overflow: hidden; font-family: 'Segoe UI', 'Nirmala UI', sans-serif; color: #fff; background: #b00020; }
+      .sos { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; text-align: center; padding: 30px; box-sizing: border-box; }
+      .alarm { animation: flash 1s steps(2) infinite; }
+      @keyframes flash { 50% { background: #7a0016; } }
+      h1 { font-size: clamp(48px, 9vw, 120px); margin: 0; letter-spacing: 2px; }
+      .ta { font-size: clamp(30px, 4.5vw, 60px); font-weight: 700; }
+      .count { font-size: clamp(90px, 18vw, 220px); font-weight: 800; line-height: 1; }
+      p { font-size: 26px; margin: 0; max-width: 1000px; }
+      .info { font-size: 22px; opacity: .92; }
+      button { font: 700 30px 'Segoe UI', sans-serif; padding: 22px 60px; border: 0; border-radius: 20px; background: #fff; color: #b00020; cursor: pointer; }
+      button:focus-visible { outline: 6px solid #ffd166; outline-offset: 4px; }
+      @media (prefers-reduced-motion: reduce) { .alarm { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./sos.jsx"></script>
+  </body>
+</html>

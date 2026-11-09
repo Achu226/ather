@@ -1,0 +1,5 @@
+node_modules/
+dist/
+release/
+# older copy of the project kept from the move
+/ather 2.0/

@@ -1,0 +1,92 @@
+{
+  "name": "ather",
+  "productName": "Maya",
+  "version": "1.8.2",
+  "description": "Maya: a free local-AI desktop assistant with a friendly face",
+  "author": "Maya (AETHER) college project",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "dev": "vite build && electron .",
+    "build:ui": "vite build",
+    "start": "electron .",
+    "test": "node --test --test-force-exit \"test/*.test.js\"",
+    "dist": "vite build && electron-builder --win nsis --publish never",
+    "release": "node scripts/release.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "docx": "9.15.0",
+    "electron-updater": "6.8.11",
+    "imapflow": "2.9.1",
+    "kokoro-js": "1.2.1",
+    "mailparser": "3.12.4",
+    "mammoth": "1.13.0",
+    "marked": "18.1.2",
+    "node-ical": "0.27.3",
+    "nodemailer": "10.2.1",
+    "pptxgenjs": "4.0.1",
+    "sharp": "0.35.5",
+    "tesseract.js": "7.0.0",
+    "unpdf": "1.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@mediapipe/tasks-vision": "1.1.1",
+    "@vitejs/plugin-react": "6.1.2",
+    "dompurify": "3.4.17",
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0",
+    "katex": "0.16.25",
+    "marked-katex-extension": "5.1.13",
+    "playwright": "^1.58.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "vite": "8.3.5"
+  },
+  "build": {
+    "appId": "com.ather.assistant",
+    "productName": "Maya",
+    "directories": {
+      "output": "release"
+    },
+    "npmRebuild": false,
+    "files": [
+      "src/main/**",
+      "src/preload/**",
+      "dist/renderer/**",
+      "assets/**",
+      "package.json",
+      "!**/onnxruntime-node/bin/*/{darwin,linux}/**",
+      "!**/onnxruntime-node/bin/*/win32/arm64/**",
+      "!**/onnxruntime-web/**",
+      "!**/@img/sharp-*-{darwin,linux,linuxmusl}-*/**"
+    ],
+    "asarUnpack": [
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**",
+      "**/node_modules/onnxruntime-node/**",
+      "**/node_modules/onnxruntime-common/**",
+      "**/node_modules/tesseract.js/**",
+      "**/node_modules/tesseract.js-core/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Maya-Setup-${version}.exe"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Achu226",
+      "repo": "ather",
+      "releaseType": "release"
+    }
+  }
+}

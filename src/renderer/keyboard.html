@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Maya keyboard</title>
+    <style>
+      html, body, #root { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 600 18px 'Segoe UI', 'Nirmala UI', sans-serif; user-select: none; }
+      .kb { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 18px;
+        background: rgba(22, 20, 32, 0.94); box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+      .top { display: flex; gap: 6px; -webkit-app-region: drag; }
+      .row { display: flex; gap: 6px; flex: 1; }
+      button { -webkit-app-region: no-drag; flex: 1; min-width: 44px; border: 0; border-radius: 12px; background: #2d2a40; color: #fff; font: inherit;
+        cursor: pointer; transition: transform .08s, background .15s; }
+      button:hover { background: #4a4470; }
+      button:active, button.hit { transform: scale(.92); background: #7c6cff; }
+      .wide { flex: 2.2; } .space { flex: 6; }
+      .sugg { background: #3b3460; color: #e6e1ff; font-weight: 700; }
+      .sugg:empty { visibility: hidden; }
+      .tool { flex: 0 0 auto; padding: 0 14px; font-size: 15px; }
+      .sos { background: #c62839; } .sos:hover { background: #e2394c; }
+      .on { background: #7c6cff; }
+      @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./keyboard.jsx"></script>
+  </body>
+</html>

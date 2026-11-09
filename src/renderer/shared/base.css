@@ -1,0 +1,203 @@
+﻿:root {
+  --ink: #1d1638;
+  --ink-soft: #5d5778;
+  --ink-faint: #8e89a6;
+  --paper: #f6f4fb;
+  --card: #ffffff;
+  --line: #e6e2f2;
+  --accent: #6c5cff;
+  --accent-2: #a35cff;
+  --accent-soft: #efecff;
+  --good: #1f9d6b;
+  --bad: #d64545;
+  --accent-ink: #4a3ad6;
+  --card-2: #fbfaff;
+  --good-soft: #e8f7ef;
+  --bad-soft: #fdecec;
+  --warn-soft: #fff7e0;
+  --warn-line: #ffe2a1;
+  --warn-ink: #a35f00;
+  --code-bg: #1d1638;
+  --face-a: #6c5cff; /* face colours, set from the face style */
+  --face-b: #a35cff;
+  --radius: 14px;
+  --shadow: 0 10px 30px rgba(40, 24, 110, 0.14);
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+  color-scheme: light;
+}
+
+/* Dark theme: near-black surfaces, the face turns black too. */
+:root[data-theme='dark'] {
+  --ink: #ececf1;
+  --ink-soft: #b4b3c2;
+  --ink-faint: #85849a;
+  --paper: #0b0b0d;
+  --card: #151518;
+  --card-2: #111114;
+  --line: #2a2a31;
+  --accent: #8b7dff;
+  --accent-2: #b48cff;
+  --accent-soft: #24213d;
+  --accent-ink: #c3bbff;
+  --good: #3ccf8e;
+  --bad: #ff6b6b;
+  --good-soft: #10291e;
+  --bad-soft: #331717;
+  --warn-soft: #2b2312;
+  --warn-line: #4d3d14;
+  --warn-ink: #ffc46b;
+  --code-bg: #000;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+body { background: var(--paper); color: var(--ink); }
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12.5px; font-weight: 600; margin: 2px 0; }
+.chip-error { background: var(--bad-soft); color: var(--bad); }
+.link { background: none; border: 0; padding: 0; color: var(--accent); text-align: left; text-decoration: underline; text-underline-offset: 2px; }
+.result-image { display: block; max-width: 100%; max-height: 240px; border-radius: 12px; margin-top: 8px; cursor: zoom-in; }
+.result-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.result-grid .result-image { margin-top: 0; width: 100%; max-height: none; aspect-ratio: auto; }
+.result-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.result-list li { margin: 2px 0; }
+.result-list em { color: var(--ink-faint); font-style: normal; }
+
+.dots { display: flex; gap: 5px; padding: 6px 0; }
+.dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: dot 1s infinite ease-in-out; }
+.dots span:nth-child(2) { animation-delay: .15s; }
+.dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+
+.pulse-ring { animation: pulse 1.2s infinite ease-in-out; transform-origin: center; }
+
+/* Face life: breathing, tool gear, sweat drop, error shake, excited bounce. Driven by real state (mood). */
+.face { overflow: visible; animation: breathe 4s ease-in-out infinite; transform-origin: 50% 90%; }
+@keyframes breathe { 50% { transform: scale(1.025, 0.985); } }
+.face .gear { animation: spin 1.6s linear infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes spin { to { transform: translate(101px, 20px) rotate(360deg); } }
+/* Working moods: keys tapping, a progress bar filling, a lens scanning, a tick drawn. */
+.face .key { animation: keytap 0.45s ease-in-out infinite alternate; }
+@keyframes keytap { to { transform: translateY(2px); opacity: 0.35; } }
+.face .progress { animation: build 2.2s ease-in-out infinite; transform-box: fill-box; transform-origin: left; }
+@keyframes build { from { transform: scaleX(0.05); } to { transform: scaleX(1); } }
+.face .lens { animation: scan 1.8s ease-in-out infinite alternate; }
+@keyframes scan { from { transform: translate(-70px, -8px); } to { transform: translate(0, 0); } }
+.face .tick { stroke-dasharray: 30; animation: draw 1.2s ease-out infinite; }
+@keyframes draw { from { stroke-dashoffset: 30; } 60%, to { stroke-dashoffset: 0; } }
+.face .sweat { animation: sweat 1.6s ease-in infinite; }
+@keyframes sweat { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(10px); opacity: 0; } }
+.face-error { animation: shake .45s ease-in-out 2; }
+@keyframes shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.face-excited, .face-celebrate { animation: bounce .6s ease-in-out 3; }
+@keyframes bounce { 50% { transform: translateY(-6px) scale(1.04); } }
+.face-worried { animation: tremble .25s ease-in-out infinite; }
+/* Waiting for a spoken yes/no: a curious head tilt and a pulsing question mark. */
+.face-ask { animation: tilt 2.2s ease-in-out infinite; }
+@keyframes tilt { 25% { transform: rotate(-5deg); } 75% { transform: rotate(4deg); } }
+.face .ask-mark { animation: pulse 1.2s ease-in-out infinite; }
+/* Emergency: the face turns red, pulses, and a white "!" blinks. */
+.face-sos { animation: sos-pulse .8s ease-in-out infinite; filter: drop-shadow(0 0 10px rgba(255, 50, 70, .8)); }
+@keyframes sos-pulse { 50% { transform: scale(1.06); } }
+.face .sos-mark { animation: pulse .5s steps(2) infinite; }
+/* Asleep after a long quiet time: slow breathing and floating Zzz. */
+.face-sleep { animation: breathe 6s ease-in-out infinite; }
+.face .zzz text { animation: zzz 3s ease-in-out infinite; opacity: 0; }
+.face .zzz text:nth-child(2) { animation-delay: .8s; } .face .zzz text:nth-child(3) { animation-delay: 1.6s; }
+@keyframes zzz { 0% { opacity: 0; transform: translate(0, 6px); } 30% { opacity: .9; } 100% { opacity: 0; transform: translate(6px, -8px); } }
+/* Woken by "Hey Maya": a big stretch. */
+.face-wake { animation: stretch .9s ease-out; }
+@keyframes stretch { 30% { transform: scale(.94, 1.12); } 60% { transform: scale(1.08, .95); } }
+/* Idle moments: a curious tilt, a yawn. */
+.face-curious { animation: tilt 1.6s ease-in-out; }
+.face-yawn { animation: yawn 1.6s ease-in-out; }
+@keyframes yawn { 40% { transform: scale(1.03, .96); } }
+/* Celebration confetti, voice ripples, the robot's antenna light. */
+.face .confetti { animation: confetti 1.4s ease-in forwards; }
+@keyframes confetti { from { transform: translateY(0) rotate(0); opacity: 1; } to { transform: translateY(105px) rotate(320deg); opacity: 0; } }
+.face .ripple { transition: rx .12s linear, ry .12s linear; }
+.face .antenna { animation: pulse 2.4s ease-in-out infinite; }
+/* A voice command was done: a quick double nod. */
+.face-nod { animation: nod .32s ease-in-out 2; }
+@keyframes nod { 50% { transform: translateY(5px) scale(1, .97); } }
+@keyframes tremble { 50% { transform: translateX(.8px); } }
+
+/* Glow follows what Maya is doing. */
+.glow-think { filter: drop-shadow(0 0 10px rgba(139, 125, 255, .65)); }
+.glow-working { filter: drop-shadow(0 0 10px rgba(255, 209, 102, .7)); }
+.glow-listen { filter: drop-shadow(0 0 12px rgba(56, 217, 169, .75)); }
+.glow-speaking { filter: drop-shadow(0 0 10px rgba(255, 143, 199, .6)); }
+.glow-error { filter: drop-shadow(0 0 12px rgba(255, 107, 107, .8)); }
+.glow-happy, .glow-celebrate, .glow-excited { filter: drop-shadow(0 0 10px rgba(60, 207, 142, .55)); }
+.face-wrap { transition: filter .4s; }
+
+/* Voice waveform under the face while listening or speaking. */
+.wave { display: flex; gap: 4px; justify-content: center; align-items: center; height: 26px; }
+.wave span { width: 5px; border-radius: 3px; background: linear-gradient(var(--face-a), var(--face-b)); transition: height 80ms; }
+
+/* Animation intensity (Settings): subtle keeps state changes, drops idle motion; off stops all motion. */
+[data-motion='subtle'] .face, [data-motion='subtle'] .face-worried { animation: none; }
+[data-motion='off'] *, [data-motion='off'] *::before, [data-motion='off'] *::after { animation: none !important; transition: none !important; }
+@keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+.face-wave .wave-hand { animation: wave .5s 4 ease-in-out; transform-origin: 100px 90px; }
+@keyframes wave { 50% { transform: rotate(-25deg); } }
+
+.lock { position: fixed; inset: 0; z-index: 100; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.lock.compact { position: static; padding: 8px 0; }
+.lock .pin { width: 150px; text-align: center; letter-spacing: .4em; font-size: 18px; }
+.approval { border: 2px solid var(--warn-line); background: var(--warn-soft); border-radius: 14px; padding: 10px 12px; margin: 8px 0; }
+.approval-body { max-height: 220px; overflow: auto; margin: 6px 0 8px; font-size: 12.5px; }
+.agent-plan { background: var(--accent-soft); border-radius: 12px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }
+.agent-plan ol { list-style: none; padding: 0; margin: 6px 0 0; }
+.agent-plan li { margin: 3px 0; }
+.agent-plan li.done { color: var(--ink-soft); }
+.py-out { background: var(--code-bg); color: #e9e7ff; border-radius: 10px; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto; margin: 6px 0; }
+
+/* Markdown answers */
+.md { overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol { margin: 0 0 .7em; }
+.md li { margin: .2em 0; }
+.md h1, .md h2, .md h3 { font-size: 1.08em; margin: 1em 0 .4em; }
+.md a { color: var(--accent); }
+.md code { font-family: Consolas, 'Cascadia Code', monospace; font-size: .92em; background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
+.md pre { position: relative; background: var(--code-bg); color: #f2efff; padding: 12px 14px; border-radius: 12px; overflow-x: auto; margin: 0 0 .8em; }
+.md pre code { background: none; padding: 0; color: inherit; }
+.md table { border-collapse: collapse; margin: 0 0 .8em; font-size: .95em; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; overflow-wrap: normal; min-width: 90px; }
+.md th { background: var(--paper); }
+.md blockquote { margin: 0 0 .8em; padding-left: 12px; border-left: 3px solid var(--line); color: var(--ink-soft); }
+.copy-code { position: absolute; top: 6px; right: 6px; border: 0; border-radius: 6px; background: rgba(255, 255, 255, .15); color: #fff; font-size: 11.5px; padding: 3px 8px; }
+.copy-code:hover { background: rgba(255, 255, 255, .3); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+/* 1.6.3: groove while music plays, hearts when thanked, notes */
+:root:not([data-motion='off']) .face-groove { animation: groove 0.55s ease-in-out infinite alternate; transform-origin: 50% 90%; }
+@keyframes groove { from { transform: translateY(0) rotate(-6deg); } to { transform: translateY(-5px) rotate(6deg); } }
+.hearts path { animation: heart-rise 1.6s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes heart-rise { 0% { opacity: 0; transform: translateY(8px) scale(.5); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(-18px) scale(1.2); } }
+.notes text { animation: heart-rise 1.4s ease-out infinite; }
+.notes text:nth-child(2) { animation-delay: .5s; }
+[data-motion='off'] .hearts path, [data-motion='off'] .notes text { animation: none; }
+/* Jarvis orb: the rings turn and the glow breathes (faster while working). */
+.face.shape-orb .orb-rings { animation: orbspin 9s linear infinite; transform-box: view-box; transform-origin: 60px 50px; }
+.face.shape-orb .orb-glow { filter: drop-shadow(0 0 6px #36e0ff); animation: orbglow 3s ease-in-out infinite; }
+.face.shape-orb.face-working .orb-rings, .face.shape-orb.face-typing .orb-rings, .face.shape-orb.face-building .orb-rings,
+.face.shape-orb.face-searching .orb-rings, .face.shape-orb.face-listen .orb-rings { animation-duration: 2.5s; }
+@keyframes orbspin { to { transform: rotate(360deg); } }
+@keyframes orbglow { 50% { filter: drop-shadow(0 0 14px #36e0ff); } }
+[data-motion='off'] .face.shape-orb .orb-rings, [data-motion='off'] .face.shape-orb .orb-glow { animation: none; }
+.face.shape-ghost .ghost-body { animation: ghostfloat 3.2s ease-in-out infinite; }
+@keyframes ghostfloat { 50% { transform: translateY(-3px); } }
+[data-motion='off'] .face.shape-ghost .ghost-body { animation: none; }
