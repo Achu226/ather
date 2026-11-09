@@ -1,7 +1,11 @@
 // Computer control through Windows UI Automation on a real app: Notepad.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+
+/** Notepad process ids now (the user's own Notepad must never be typed into or closed). */
+const notepadPids = () => execFileSync('powershell.exe', ['-NoProfile', '-Command', '(Get-Process notepad -ErrorAction SilentlyContinue).Id'], { encoding: 'utf8' })
+  .split(/\s+/).filter(Boolean).map(Number);
 import { createPc } from '../src/main/services/pc.js';
 import { computerTools, createComputerSession, toSendKeys, cellCenter, annotate } from '../src/main/tools/computer.js';
 
@@ -39,7 +43,9 @@ test('computer tools refuse to act before the user allows it', async () => {
   assert.ok(computerTools.find((t) => t.name === 'computer_start').confirm);
 });
 
-test('controls Notepad: finds the text area by UI Automation and types into it', { timeout: 120_000 }, async () => {
+test('controls Notepad: finds the text area by UI Automation and types into it', { timeout: 120_000 }, async (t) => {
+  // Windows 11 opens a new Notepad as a tab of the open one, so with the user's Notepad open the test would type into it.
+  if (notepadPids().length) { t.skip('Notepad is already open (the user\'s): not touching it'); return; }
   const pc = createPc({ shell: { openPath: async () => '' } });
   const services = { pc, computer: createComputerSession() };
   const run = (name, args = {}) => computerTools.find((t) => t.name === name).run(args, { services });
@@ -66,7 +72,7 @@ test('controls Notepad: finds the text area by UI Automation and types into it',
     run('computer_done', { summary: 'typed' });
     assert.equal(services.computer.active, false);
   } finally {
-    execFile('taskkill.exe', ['/IM', 'notepad.exe', '/F']);
+    for (const pid of notepadPids()) execFile('taskkill.exe', ['/PID', String(pid), '/F']); // none was open before this test
     pc.stop();
   }
 });
