@@ -35,7 +35,8 @@ async function printPdf(html) {
   }
 }
 import { fileURLToPath } from 'node:url';
-import { openStore } from './store.js';
+import { openStore, now } from './store.js';
+import { createTelegram } from './services/telegram.js';
 import { createMl } from './ml/client.js';
 import { createSecrets } from './secrets.js';
 import { createWindows } from './windows.js';
@@ -44,7 +45,7 @@ import { allTools } from './tools/index.js';
 import { ensureOllama, ensureBrainModel, hasModel, pullModel } from './ollama.js';
 import { systemCheck } from './services/syscheck.js';
 import os from 'node:os';
-import { BRAIN_MODEL, BASE_MODEL, complete } from './brain.js';
+import { BRAIN_MODEL, BASE_MODEL, complete, ask } from './brain.js';
 import { hfModels, hfInstalled } from './ml/catalog.js';
 import { webSearch, readPage } from './services/web.js';
 import { createSearch } from './services/search.js';
@@ -158,6 +159,23 @@ app.whenReady().then(async () => {
     windows.sos(s.state === 'cancelled' || s.state === 'off' ? null : s);
     windows.toNotch('sos', s);
   }, call: (number) => phoneCall({ pc: services.pc, open: (url) => shell.openExternal(url), number }) });
+  // Maya from the phone (Telegram): its own conversation, so the chat shows up on the PC too.
+  const phoneConversation = () => {
+    const id = store.getSetting('phoneConversation');
+    if (id && store.get('SELECT id FROM conversations WHERE id = ?', id)) return id;
+    const fresh = Number(store.run('INSERT INTO conversations (title, created_at, updated_at) VALUES (?,?,?)', 'From my phone (Telegram)', now(), now()).lastInsertRowid);
+    store.setSetting('phoneConversation', fresh);
+    return fresh;
+  };
+  services.telegram = createTelegram({
+    store, secrets, onChange: () => windows.broadcast('data:changed'),
+    answer: async (text, { confirm }) => {
+      const reply = await ask({ text, store, tools: [...allTools, ...services.mcpClient.tools()], services: { ...services, confirm }, conversationId: phoneConversation(), style: 'short' });
+      windows.broadcast('data:changed');
+      return reply;
+    },
+  });
+  services.telegram.start();
   // Work timer: goodbye, a minute to say "wait", then a normal shutdown (apps can still ask to save).
   // ATHER_NO_SHUTDOWN: the live tests run the whole goodbye without ever switching the PC off.
   services.session = createSession({ store, activity: services.activity,
@@ -336,6 +354,8 @@ app.whenReady().then(async () => {
     windows.expand(false);
     windows.toNotch('notify', { title, body, kind, id });
     windows.broadcast('data:changed');
+    // Reminders, medicine and classes also reach the phone (Telegram, when paired): the user may be away from the PC.
+    if (kind === 'reminder' || kind === 'care') services.telegram.notify(`⏰ ${title}: ${body}`);
   };
   startScheduler(store, notify);
   setInterval(() => careTick(store, (reason) => services.sos.notify(reason)).then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 60_000);

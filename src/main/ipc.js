@@ -182,6 +182,10 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('sos:test', () => services.sos.test());
   handle('sos:testCall', () => services.sos.testCall());
   handle('sos:log', () => store.getSetting('sosLog', []));
+  // Telegram (Connections page): the token never comes back to the screen, only the status.
+  handle('telegram:status', () => services.telegram.status());
+  handle('telegram:setToken', async (token) => { const s = await services.telegram.setToken(token); services.telegram.start(); return s; });
+  handle('telegram:forget', () => { services.telegram.forget(); return services.telegram.status(); });
   ipcMain.on('voice:heard', () => { services.lastVoice = Date.now(); });
   handle('headmouse:set', (on) => services.headMouse.set(on));
   handle('headmouse:model', async () => readFileSync(await downloadFile('facemesh')));

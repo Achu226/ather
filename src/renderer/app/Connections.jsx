@@ -24,6 +24,14 @@ export default function Connections({ go, version }) {
   const [chrome, setChrome] = useState([]);
   const [providers, setProviders] = useState([]);
   const [msg, setMsg] = useState(null);
+  const [tg, setTg] = useState(null);
+  const [token, setToken] = useState('');
+  useEffect(() => { window.ather.telegramStatus?.().then(setTg).catch(() => {}); }, [version]);
+  const connectTelegram = async (e) => {
+    e.preventDefault();
+    setMsg('Checking the token with Telegram…');
+    try { setTg(await window.ather.telegramSetToken(token)); setToken(''); setMsg(null); } catch (err) { setMsg(`⚠ ${errText(err)}`); }
+  };
   useEffect(() => {
     window.ather.getSetting('mail', null).then(setMail);
     window.ather.getSetting('sos', {}).then((s) => setSos(s || {}));
@@ -70,6 +78,25 @@ export default function Connections({ go, version }) {
 
         <Card icon="🧠" name="Cloud AI (OpenAI, Gemini, Claude…)" on={cloud.length > 0} detail={cloud.length ? `Using: ${cloud.map((p) => p.name).join(', ')}. Also gives Maya the ChatGPT voices.` : 'Optional. Maya works fully offline; add a key for bigger models or the ChatGPT voices.'}>
           <button className="btn" onClick={() => go('models')}>AI models</button>
+        </Card>
+
+        <Card icon="✈️" name="Telegram (Maya on your phone)" on={!!tg?.paired}
+          detail={tg?.paired ? `Paired with ${tg.chat} through @${tg.bot}. Message the bot from anywhere: questions, tasks, reminders, notes. Mouse, keyboard and sending mail still need your OK on the PC.`
+            : 'Talk to Maya from your phone, free, through your own Telegram bot. Only your chat is answered.'}>
+          {!tg?.configured && (
+            <form className="field" onSubmit={connectTelegram}>
+              <ol className="muted steps"><li>On your phone, open Telegram and message <b>@BotFather</b>.</li><li>Send <code>/newbot</code>, pick a name, and copy the token it gives you.</li><li>Paste it here.</li></ol>
+              <div className="row wrap">
+                <input className="input" style={{ flex: 1, minWidth: 220 }} type="password" autoComplete="off" placeholder="123456:ABC…" value={token} onChange={(e) => setToken(e.target.value)} aria-label="Telegram bot token" />
+                <button className="btn primary" disabled={!token.trim()}>Connect</button>
+              </div>
+            </form>
+          )}
+          {tg?.configured && !tg.paired && (
+            <p>Now open <b>@{tg.bot}</b> in Telegram on your phone and send this code:<br /><span className="pair-code" aria-label={`Pairing code ${tg.code.split('').join(' ')}`}>{tg.code}</span></p>
+          )}
+          {tg?.error && <p className="muted" role="status">⚠ {tg.error}</p>}
+          {tg?.configured && <button className="btn small" onClick={async () => setTg(await window.ather.telegramForget())}>Disconnect Telegram</button>}
         </Card>
 
         <Card icon="🔌" name="More tools (MCP)" on detail="GitHub, files, browser automation, docs and more, as connected tools Maya can use." >
