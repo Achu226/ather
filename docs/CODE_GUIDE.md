@@ -1,6 +1,6 @@
-# Maya 1.8.4 — source code guide
+# Maya 1.8.5 — source code guide
 
-Every source file, in reading order, grouped by the modules of the AETHER project report. 205 files, 19,827 lines. Languages: JavaScript (Node.js + React), HTML, CSS; C# and PowerShell inside src/main/services/pc.js; Windows batch files.
+Every source file, in reading order, grouped by the modules of the AETHER project report. 213 files, 20,641 lines. Languages: JavaScript (Node.js + React), HTML, CSS; C# and PowerShell inside src/main/services/pc.js; Windows batch files.
 
 Start here: `start.bat` runs Maya from this folder; `install.bat` installs the latest release on another PC.
 
@@ -10,15 +10,15 @@ Speech to text (Whisper), text to speech (Kokoro, Tamil MMS), the face window (n
 
 | # | File | Lines | What it does |
 |---|---|---|---|
-| 1 | [src/main/main.js](../src/main/main.js) | 419 | Electron entry point: creates every service, the windows, global shortcuts and timers. |
-| 2 | [src/main/windows.js](../src/main/windows.js) | 280 | All windows: the face at the top of the screen, the app, tray, snip overlay, captions bar, head-mouse camera and voice-control layer. |
-| 3 | [src/preload/preload.cjs](../src/preload/preload.cjs) | 181 | The safe bridge (window.ather) between the web pages and the core. |
-| 4 | [src/main/ipc.js](../src/main/ipc.js) | 459 | Every request from the windows to the core (ask, tools, settings, models, workflows, captions, head mouse…), with the PIN-lock check. |
+| 1 | [src/main/main.js](../src/main/main.js) | 440 | Electron entry point: creates every service, the windows, global shortcuts and timers. |
+| 2 | [src/main/windows.js](../src/main/windows.js) | 281 | All windows: the face at the top of the screen, the app, tray, snip overlay, captions bar, head-mouse camera and voice-control layer. |
+| 3 | [src/preload/preload.cjs](../src/preload/preload.cjs) | 188 | The safe bridge (window.ather) between the web pages and the core. |
+| 4 | [src/main/ipc.js](../src/main/ipc.js) | 472 | Every request from the windows to the core (ask, tools, settings, models, workflows, captions, head mouse…), with the PIN-lock check. |
 | 5 | [src/main/speech.js](../src/main/speech.js) | 50 | Speaking replies: Kokoro for Latin-script text, Windows voices for other alphabets. |
 | 6 | [src/main/dictation.js](../src/main/dictation.js) | 35 | "Type with your voice": transcribed text is pasted into whatever app has focus. |
 | 7 | [src/main/services/sapi.js](../src/main/services/sapi.js) | 48 | Offline Windows voices (System.Speech) for languages Kokoro cannot speak, e.g. Hindi, Russian, Chinese. |
 | 8 | [src/renderer/notch.html](../src/renderer/notch.html) | 13 | Page for the face window. |
-| 9 | [src/renderer/notch.jsx](../src/renderer/notch.jsx) | 644 | The face window: ask by text or voice, hands-free voice chat, emotions, approvals, clipboard picker. |
+| 9 | [src/renderer/notch.jsx](../src/renderer/notch.jsx) | 663 | The face window: ask by text or voice, hands-free voice chat, emotions, approvals, clipboard picker. |
 | 10 | [src/renderer/notch.css](../src/renderer/notch.css) | 67 | Styles of the face window at the top of the screen. |
 | 11 | [src/renderer/shared/voice.js](../src/renderer/shared/voice.js) | 97 | Hands-free voice: wait for the user to speak, notice when they stop, and detect them talking over Maya. |
 | 12 | [src/renderer/shared/audio.js](../src/renderer/shared/audio.js) | 95 | Microphone capture at 16 kHz (what Whisper expects) and speech playback with a mouth-level callback. |
@@ -33,24 +33,28 @@ Speech to text (Whisper), text to speech (Kokoro, Tamil MMS), the face window (n
 | 21 | [src/main/services/voicecontrol.js](../src/main/services/voicecontrol.js) | 204 | Carries out voice commands in the app the user is working in: numbers or grid on screen, click, scroll, keys, typing. |
 | 22 | [src/renderer/overlay.html](../src/renderer/overlay.html) | 37 | Page for the hands-free layer (numbers, grid, scanning highlight, dwell ring). |
 | 23 | [src/renderer/overlay.jsx](../src/renderer/overlay.jsx) | 68 | Click-through layer over the whole screen for hands-free control: yellow numbers on every control, a lettered grid, |
-| 24 | [src/renderer/app/Accessibility.jsx](../src/renderer/app/Accessibility.jsx) | 227 | Accessibility page: voice only, head mouse and dwell click, keyboard, switch scanning, emergency help, large mode. |
-| 25 | [src/main/services/scanning.js](../src/main/services/scanning.js) | 32 | Switch scanning, for people who can press only one button (or make one sound): controls light up in turn and a |
-| 26 | [src/main/services/keyboard.js](../src/main/services/keyboard.js) | 37 | Word suggestions for the on-screen keyboard: common English words plus the words this user types (English or Tamil). |
-| 27 | [src/renderer/keyboard.html](../src/renderer/keyboard.html) | 31 | Page for the on-screen keyboard. |
-| 28 | [src/renderer/keyboard.jsx](../src/renderer/keyboard.jsx) | 81 | On-screen keyboard for people who type with a head mouse, dwell clicks or a switch. Keys go to the app with the focus |
-| 29 | [src/main/services/sos.js](../src/main/services/sos.js) | 156 | Emergency SOS for people who may not be able to reach a phone: a short countdown (so a misheard word can be undone), |
-| 30 | [src/main/services/telegram.js](../src/main/services/telegram.js) | 125 | Talk to Maya from your phone through your own Telegram bot (free). Off until the user pastes a bot token from |
-| 31 | [src/renderer/sos.html](../src/renderer/sos.html) | 31 | Page for the full-screen SOS sign. |
-| 32 | [src/renderer/sos.jsx](../src/renderer/sos.jsx) | 64 | Full-screen emergency sign: a countdown first (so a misheard "help" can be undone), then a flashing |
-| 33 | [src/main/services/session.js](../src/main/services/session.js) | 79 | Work timer: "work for 2 hours, then shut down". When time is up Maya sums up the day, says goodbye, |
-| 34 | [src/main/services/chatbots.js](../src/main/services/chatbots.js) | 55 | "Ask ChatGPT / ask Claude …" for people who cannot type: open the prompt in the user's own browser (where they |
-| 35 | [src/renderer/shared/MicButton.jsx](../src/renderer/shared/MicButton.jsx) | 15 |  |
-| 36 | [src/renderer/app.html](../src/renderer/app.html) | 13 | Page for the app window. |
-| 37 | [src/renderer/app.jsx](../src/renderer/app.jsx) | 108 | The app window: sidebar sections, setup, lock screen and approvals. |
-| 38 | [src/renderer/app.css](../src/renderer/app.css) | 297 | Styles of the app window (chat, workflows, timetable, meters…). |
-| 39 | [src/renderer/shared/base.css](../src/renderer/shared/base.css) | 204 | Shared colours, light/dark theme and face animations. |
-| 40 | [src/renderer/app/Chat.jsx](../src/renderer/app/Chat.jsx) | 239 | ChatGPT-style chat: conversations, model picker, files, voice, agent checklist. |
-| 41 | [src/renderer/app/Home.jsx](../src/renderer/app/Home.jsx) | 173 | Home: briefing, today, coming up (classes, exams), what Maya noticed. |
+| 24 | [src/renderer/app/Accessibility.jsx](../src/renderer/app/Accessibility.jsx) | 254 | Accessibility page: voice only, head mouse and dwell click, keyboard, switch scanning, emergency help, large mode. |
+| 25 | [src/renderer/app/Speak.jsx](../src/renderer/app/Speak.jsx) | 92 | Speak for me: a phrase board for people who cannot speak clearly. Click, dwell or scan to a phrase, or choose by |
+| 26 | [src/renderer/shared/speakboard.js](../src/renderer/shared/speakboard.js) | 28 | "Speak for me" board logic (as in look-to-speak): the phrases are split into a left and a right half; each glance |
+| 27 | [src/renderer/shared/noiseswitch.js](../src/renderer/shared/noiseswitch.js) | 49 | Mouth-noise switch (as in Talon's "pop"): a short, sharp sound such as a lip pop or tongue click presses the switch, |
+| 28 | [src/renderer/shared/voicenotes.js](../src/renderer/shared/voicenotes.js) | 50 | Telegram voice notes, done with Chromium's own audio code (no extra library): decode a phone's Ogg/Opus note to |
+| 29 | [src/main/services/scanning.js](../src/main/services/scanning.js) | 32 | Switch scanning, for people who can press only one button (or make one sound): controls light up in turn and a |
+| 30 | [src/main/services/keyboard.js](../src/main/services/keyboard.js) | 37 | Word suggestions for the on-screen keyboard: common English words plus the words this user types (English or Tamil). |
+| 31 | [src/renderer/keyboard.html](../src/renderer/keyboard.html) | 31 | Page for the on-screen keyboard. |
+| 32 | [src/renderer/keyboard.jsx](../src/renderer/keyboard.jsx) | 81 | On-screen keyboard for people who type with a head mouse, dwell clicks or a switch. Keys go to the app with the focus |
+| 33 | [src/main/services/sos.js](../src/main/services/sos.js) | 156 | Emergency SOS for people who may not be able to reach a phone: a short countdown (so a misheard word can be undone), |
+| 34 | [src/main/services/telegram.js](../src/main/services/telegram.js) | 162 | Talk to Maya from your phone through your own Telegram bot (free). Off until the user pastes a bot token from |
+| 35 | [src/renderer/sos.html](../src/renderer/sos.html) | 31 | Page for the full-screen SOS sign. |
+| 36 | [src/renderer/sos.jsx](../src/renderer/sos.jsx) | 64 | Full-screen emergency sign: a countdown first (so a misheard "help" can be undone), then a flashing |
+| 37 | [src/main/services/session.js](../src/main/services/session.js) | 79 | Work timer: "work for 2 hours, then shut down". When time is up Maya sums up the day, says goodbye, |
+| 38 | [src/main/services/chatbots.js](../src/main/services/chatbots.js) | 55 | "Ask ChatGPT / ask Claude …" for people who cannot type: open the prompt in the user's own browser (where they |
+| 39 | [src/renderer/shared/MicButton.jsx](../src/renderer/shared/MicButton.jsx) | 15 |  |
+| 40 | [src/renderer/app.html](../src/renderer/app.html) | 13 | Page for the app window. |
+| 41 | [src/renderer/app.jsx](../src/renderer/app.jsx) | 110 | The app window: sidebar sections, setup, lock screen and approvals. |
+| 42 | [src/renderer/app.css](../src/renderer/app.css) | 309 | Styles of the app window (chat, workflows, timetable, meters…). |
+| 43 | [src/renderer/shared/base.css](../src/renderer/shared/base.css) | 204 | Shared colours, light/dark theme and face animations. |
+| 44 | [src/renderer/app/Chat.jsx](../src/renderer/app/Chat.jsx) | 239 | ChatGPT-style chat: conversations, model picker, files, voice, agent checklist. |
+| 45 | [src/renderer/app/Home.jsx](../src/renderer/app/Home.jsx) | 173 | Home: briefing, today, coming up (classes, exams), what Maya noticed. |
 
 ## 2. Supervisor Orchestration Core
 
@@ -64,7 +68,7 @@ Understands the request, picks the model, chooses tools, plans multi-step goals 
 | 4 | [src/main/providers.js](../src/main/providers.js) | 112 | Every place a model can run: local (Ollama, LM Studio) or cloud (any OpenAI-compatible API). |
 | 5 | [src/main/ollama.js](../src/main/ollama.js) | 87 | Talks to Ollama: is it running, pull models, build ather-brain/ather-smart, embeddings, free the GPU. |
 | 6 | [src/main/tools/index.js](../src/main/tools/index.js) | 14 | The full list of tools the AI can use. |
-| 7 | [src/main/tools/select.js](../src/main/tools/select.js) | 73 | Give the model only the tools a request can need: ~60 tool descriptions confuse small models into |
+| 7 | [src/main/tools/select.js](../src/main/tools/select.js) | 74 | Give the model only the tools a request can need: ~60 tool descriptions confuse small models into |
 | 8 | [src/main/services/skills.js](../src/main/services/skills.js) | 105 | Skills: named recipes Maya follows ("when I say goodnight, turn on dark mode and read tomorrow's tasks"). |
 | 9 | [src/main/services/learning.js](../src/main/services/learning.js) | 79 | Learning from the user, all on this PC: words Maya keeps mishearing, and what the user liked or did not like. |
 | 10 | [src/main/services/worklog.js](../src/main/services/worklog.js) | 55 | The work monitor: every action Maya takes, in plain words ("Wrote app.js", "Sent an email to Rahul"), |
@@ -72,7 +76,7 @@ Understands the request, picks the model, chooses tools, plans multi-step goals 
 | 12 | [src/renderer/app/Skills.jsx](../src/renderer/app/Skills.jsx) | 56 |  |
 | 13 | [src/renderer/app/Monitor.jsx](../src/renderer/app/Monitor.jsx) | 56 |  |
 | 14 | [src/renderer/app/Agent.jsx](../src/renderer/app/Agent.jsx) | 152 |  |
-| 15 | [src/renderer/app/Connections.jsx](../src/renderer/app/Connections.jsx) | 119 |  |
+| 15 | [src/renderer/app/Connections.jsx](../src/renderer/app/Connections.jsx) | 148 |  |
 | 16 | [src/renderer/app/Brain.jsx](../src/renderer/app/Brain.jsx) | 113 |  |
 | 17 | [src/renderer/shared/work.js](../src/renderer/shared/work.js) | 9 | The face Maya makes while a tool runs, like a person at work (exported for tests). |
 | 18 | [src/main/services/workflows.js](../src/main/services/workflows.js) | 115 | Runs saved routines as workflows: each step has a live state (waiting, running, awaiting approval, |
@@ -88,15 +92,15 @@ Safe access to the PC: approved folders only, approval cards for risky actions, 
 | 1 | [src/main/approvals.js](../src/main/approvals.js) | 34 | Ask the user in a window before a risky tool runs. Unanswered requests are denied after 5 minutes. |
 | 2 | [src/main/tools/dev.js](../src/main/tools/dev.js) | 309 | Built-in "MCP-style" capabilities: file manager, Git, SQLite, time, and approved commands. |
 | 3 | [src/main/tools/pc.js](../src/main/tools/pc.js) | 180 | PC control, routines and activity. ctx.services supplies pc and activity. |
-| 4 | [src/main/services/pc.js](../src/main/services/pc.js) | 476 | PC control and activity sensing through one long-running PowerShell helper (Win32 + Core Audio via C#). |
+| 4 | [src/main/services/pc.js](../src/main/services/pc.js) | 488 | PC control and activity sensing through one long-running PowerShell helper (Win32 + Core Audio via C#). |
 | 5 | [src/main/tools/computer.js](../src/main/tools/computer.js) | 215 | Computer control: Maya works in other apps through Windows UI Automation (named buttons and fields), |
 | 6 | [src/main/services/sysmon.js](../src/main/services/sysmon.js) | 52 | "This PC" monitor: CPU, memory, disk, GPU (NVIDIA), battery and the busiest apps. |
 | 7 | [src/main/services/activity.js](../src/main/services/activity.js) | 73 | Which apps/sites the user spends time in (local only, app/site names, never full window titles), |
 | 8 | [src/renderer/shared/Approvals.jsx](../src/renderer/shared/Approvals.jsx) | 96 | Approval cards: Maya asks before risky actions. |
 | 9 | [src/renderer/app/Activity.jsx](../src/renderer/app/Activity.jsx) | 141 | Activity page: time per app, This PC meters, Maya's actions on the PC. |
 | 10 | [src/renderer/headmouse.html](../src/renderer/headmouse.html) | 25 | Page for the head-mouse camera window. |
-| 11 | [src/renderer/headmouse.jsx](../src/renderer/headmouse.jsx) | 99 | Hands-free mouse: the webcam follows your head to move the cursor; open your mouth to click, smile to right-click, |
-| 12 | [src/renderer/shared/headpose.js](../src/renderer/shared/headpose.js) | 116 | Head mouse maths: face landmarks → cursor position, face expressions → clicks. Pure, so it is unit tested. |
+| 11 | [src/renderer/headmouse.jsx](../src/renderer/headmouse.jsx) | 114 | Hands-free mouse: the webcam follows your head to move the cursor; open your mouth to click, smile to right-click, |
+| 12 | [src/renderer/shared/headpose.js](../src/renderer/shared/headpose.js) | 171 | Head mouse maths: face landmarks → cursor position, face expressions → clicks. Pure, so it is unit tested. |
 
 ## 4. Autonomous Engineering Sub-Agent
 
@@ -206,16 +210,17 @@ Memory, web, smart search, screen snip, clipboard history, live captions, health
 | 9 | [src/renderer/snip.jsx](../src/renderer/snip.jsx) | 40 | Drag a box on a frozen screenshot to ask about that part (Ctrl+Shift+S). |
 | 10 | [src/renderer/captions.html](../src/renderer/captions.html) | 25 | Page for the live captions bar. |
 | 11 | [src/renderer/captions.jsx](../src/renderer/captions.jsx) | 52 | Live captions of the computer's sound (videos, online classes, calls), optionally translated to English. |
-| 12 | [src/main/tools/everyday.js](../src/main/tools/everyday.js) | 184 | Everyday voice actions (as on heynixi.app): point at things on screen, write at the cursor, teleprompter, |
+| 12 | [src/main/tools/everyday.js](../src/main/tools/everyday.js) | 210 | Everyday voice actions (as on heynixi.app): point at things on screen, write at the cursor, teleprompter, |
 | 13 | [src/main/services/places.js](../src/main/services/places.js) | 96 | Wheelchair-accessible places nearby, from OpenStreetMap's own search (Nominatim: free, no key; one request per |
-| 14 | [src/main/services/timers.js](../src/main/services/timers.js) | 41 | Countdown timers ("set a timer for 10 minutes"). notify() rings and speaks when one ends; onChange(list) keeps the |
-| 15 | [src/renderer/prompter.html](../src/renderer/prompter.html) | 31 |  |
-| 16 | [src/renderer/prompter.jsx](../src/renderer/prompter.jsx) | 79 | Teleprompter that listens: the script scrolls along as you read it aloud, and waits when you pause. |
-| 17 | [src/renderer/shared/prompter.js](../src/renderer/shared/prompter.js) | 26 | Teleprompter maths: find where the reader is in the script from the last words they said. |
-| 18 | [src/renderer/camera.html](../src/renderer/camera.html) | 12 |  |
-| 19 | [src/renderer/camera.js](../src/renderer/camera.js) | 21 | Camera eyes: one photo from the webcam, taken only when Maya is asked ("what's in front of me?", "read this paper"). |
-| 20 | [src/main/services/interpreter.js](../src/main/services/interpreter.js) | 38 | Interpreter mode: two people talk, Maya says each sentence in the other language (English ↔ another language). |
-| 21 | [src/main/tools/people.js](../src/main/tools/people.js) | 138 | People and feelings: a contact book for calls and WhatsApp by voice, and a spoken diary with moods. |
+| 14 | [src/main/services/watch.js](../src/main/services/watch.js) | 60 | Watch a website (as in OpenClaw's monitoring): Maya re-reads a page every few hours and tells the user (desktop |
+| 15 | [src/main/services/timers.js](../src/main/services/timers.js) | 41 | Countdown timers ("set a timer for 10 minutes"). notify() rings and speaks when one ends; onChange(list) keeps the |
+| 16 | [src/renderer/prompter.html](../src/renderer/prompter.html) | 31 |  |
+| 17 | [src/renderer/prompter.jsx](../src/renderer/prompter.jsx) | 79 | Teleprompter that listens: the script scrolls along as you read it aloud, and waits when you pause. |
+| 18 | [src/renderer/shared/prompter.js](../src/renderer/shared/prompter.js) | 26 | Teleprompter maths: find where the reader is in the script from the last words they said. |
+| 19 | [src/renderer/camera.html](../src/renderer/camera.html) | 12 |  |
+| 20 | [src/renderer/camera.js](../src/renderer/camera.js) | 21 | Camera eyes: one photo from the webcam, taken only when Maya is asked ("what's in front of me?", "read this paper"). |
+| 21 | [src/main/services/interpreter.js](../src/main/services/interpreter.js) | 38 | Interpreter mode: two people talk, Maya says each sentence in the other language (English ↔ another language). |
+| 22 | [src/main/tools/people.js](../src/main/tools/people.js) | 138 | People and feelings: a contact book for calls and WhatsApp by voice, and a spoken diary with moods. |
 
 ## 11. Data, security and settings
 
@@ -257,7 +262,7 @@ Automatic checks (npm test). Model tests skip themselves when a model is not dow
 | 10 | [test/emotion.test.js](../test/emotion.test.js) | 27 | Face emotions from what the user says. |
 | 11 | [test/everyday.test.js](../test/everyday.test.js) | 62 |  |
 | 12 | [test/eyes.test.js](../test/eyes.test.js) | 43 |  |
-| 13 | [test/headpose.test.js](../test/headpose.test.js) | 54 | Head mouse maths: head direction, cursor, mouth/smile clicks. |
+| 13 | [test/headpose.test.js](../test/headpose.test.js) | 92 | Head mouse maths: head direction, cursor, mouth/smile clicks. |
 | 14 | [test/holdkeys.test.js](../test/holdkeys.test.js) | 48 |  |
 | 15 | [test/image-extras.test.js](../test/image-extras.test.js) | 50 | Background removal and upscaling. |
 | 16 | [test/imaging.test.js](../test/imaging.test.js) | 45 | Real image generation + blur (slow, uses the GPU). Skipped until the models are downloaded. |
@@ -271,24 +276,27 @@ Automatic checks (npm test). Model tests skip themselves when a model is not dow
 | 24 | [test/memory.test.js](../test/memory.test.js) | 44 | Memory: survives restart, updates, deletes, refuses secrets. |
 | 25 | [test/ml.test.js](../test/ml.test.js) | 33 | Real-model checks (slow). Skipped until the models are downloaded: node scripts/fetch-models.js |
 | 26 | [test/monitor.test.js](../test/monitor.test.js) | 141 | Work monitor in plain words, working faces, OLLAMA_HOST addresses, tool calls written as text. |
-| 27 | [test/pc.test.js](../test/pc.test.js) | 32 | App-name matching and window descriptions. |
-| 28 | [test/people.test.js](../test/people.test.js) | 75 |  |
-| 29 | [test/places.test.js](../test/places.test.js) | 108 |  |
-| 30 | [test/power.test.js](../test/power.test.js) | 81 | Python, PowerPoint/Word, approvals, code interpreter, agent mode. |
-| 31 | [test/productivity.test.js](../test/productivity.test.js) | 78 | Tasks, notes, reminders, habits, focus, undo. |
-| 32 | [test/prompter.test.js](../test/prompter.test.js) | 20 |  |
-| 33 | [test/providers.test.js](../test/providers.test.js) | 73 | Provider engine against real endpoints: Ollama's OpenAI-compatible API registered as a "custom" provider, |
-| 34 | [test/scanning.test.js](../test/scanning.test.js) | 35 | Switch scanning order: groups, controls, back step. |
-| 35 | [test/security.test.js](../test/security.test.js) | 81 | PIN lock, backup and restore, icons. |
-| 36 | [test/select.test.js](../test/select.test.js) | 45 | Which tools each request gets. |
-| 37 | [test/services.test.js](../test/services.test.js) | 83 | Tool names, read-only tools, scheduler, audio. |
-| 38 | [test/session.test.js](../test/session.test.js) | 321 | Work timer goodbye and shutdown (never real), voice wait/magnifier/pages, blink click, care reminders, emergency call, ChatGPT answer reading. |
-| 39 | [test/skills-learn.test.js](../test/skills-learn.test.js) | 77 |  |
-| 40 | [test/skills.test.js](../test/skills.test.js) | 77 | Skills: built-ins use real tools, the right skill is picked, everyday sentences pick none, taught skills by name. |
-| 41 | [test/sos.test.js](../test/sos.test.js) | 118 | Emergency: countdown, cancel, caregiver email, check-in hours. |
-| 42 | [test/student.test.js](../test/student.test.js) | 85 | Timetable, exams, class alerts, clipboard, health breaks. |
-| 43 | [test/telegram.test.js](../test/telegram.test.js) | 147 |  |
-| 44 | [test/voicecommands.test.js](../test/voicecommands.test.js) | 51 | Voice commands, questions left for the AI, spoken yes/no in English and Tamil. |
-| 45 | [test/wake.test.js](../test/wake.test.js) | 56 | "Hey Maya" wake word and stop phrases. |
-| 46 | [test/web-voice.test.js](../test/web-voice.test.js) | 33 | Web search through the brain + Windows voice fallback. Needs Ollama and internet. |
-| 47 | [test/workflows.test.js](../test/workflows.test.js) | 99 | Workflows: 3 real steps, cancel, pause/resume, retry, approval, schedule. |
+| 27 | [test/noiseswitch.test.js](../test/noiseswitch.test.js) | 36 |  |
+| 28 | [test/pc.test.js](../test/pc.test.js) | 40 | App-name matching and window descriptions. |
+| 29 | [test/people.test.js](../test/people.test.js) | 75 |  |
+| 30 | [test/places.test.js](../test/places.test.js) | 108 |  |
+| 31 | [test/power.test.js](../test/power.test.js) | 81 | Python, PowerPoint/Word, approvals, code interpreter, agent mode. |
+| 32 | [test/productivity.test.js](../test/productivity.test.js) | 78 | Tasks, notes, reminders, habits, focus, undo. |
+| 33 | [test/prompter.test.js](../test/prompter.test.js) | 20 |  |
+| 34 | [test/providers.test.js](../test/providers.test.js) | 73 | Provider engine against real endpoints: Ollama's OpenAI-compatible API registered as a "custom" provider, |
+| 35 | [test/scanning.test.js](../test/scanning.test.js) | 35 | Switch scanning order: groups, controls, back step. |
+| 36 | [test/security.test.js](../test/security.test.js) | 81 | PIN lock, backup and restore, icons. |
+| 37 | [test/select.test.js](../test/select.test.js) | 45 | Which tools each request gets. |
+| 38 | [test/services.test.js](../test/services.test.js) | 83 | Tool names, read-only tools, scheduler, audio. |
+| 39 | [test/session.test.js](../test/session.test.js) | 321 | Work timer goodbye and shutdown (never real), voice wait/magnifier/pages, blink click, care reminders, emergency call, ChatGPT answer reading. |
+| 40 | [test/skills-learn.test.js](../test/skills-learn.test.js) | 77 |  |
+| 41 | [test/skills.test.js](../test/skills.test.js) | 77 | Skills: built-ins use real tools, the right skill is picked, everyday sentences pick none, taught skills by name. |
+| 42 | [test/sos.test.js](../test/sos.test.js) | 118 | Emergency: countdown, cancel, caregiver email, check-in hours. |
+| 43 | [test/speakboard.test.js](../test/speakboard.test.js) | 28 |  |
+| 44 | [test/student.test.js](../test/student.test.js) | 85 | Timetable, exams, class alerts, clipboard, health breaks. |
+| 45 | [test/telegram.test.js](../test/telegram.test.js) | 213 |  |
+| 46 | [test/voicecommands.test.js](../test/voicecommands.test.js) | 51 | Voice commands, questions left for the AI, spoken yes/no in English and Tamil. |
+| 47 | [test/wake.test.js](../test/wake.test.js) | 56 | "Hey Maya" wake word and stop phrases. |
+| 48 | [test/watch.test.js](../test/watch.test.js) | 82 |  |
+| 49 | [test/web-voice.test.js](../test/web-voice.test.js) | 33 | Web search through the brain + Windows voice fallback. Needs Ollama and internet. |
+| 50 | [test/workflows.test.js](../test/workflows.test.js) | 99 | Workflows: 3 real steps, cancel, pause/resume, retry, approval, schedule. |

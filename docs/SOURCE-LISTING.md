@@ -1,4 +1,4 @@
-# Maya 1.8.4 — full source listing
+# Maya 1.8.5 — full source listing
 
 Same order as CODE_GUIDE.md.
 
@@ -46,6 +46,9 @@ async function printPdf(html) {
 import { fileURLToPath } from 'node:url';
 import { openStore, now } from './store.js';
 import { createTelegram } from './services/telegram.js';
+import { createWatches } from './services/watch.js';
+import { speakReply } from './speech.js';
+import { fixHeard } from './services/learning.js';
 import { createMl } from './ml/client.js';
 import { createSecrets } from './secrets.js';
 import { createWindows } from './windows.js';
@@ -178,8 +181,23 @@ app.whenReady().then(async () => {
     store.setSetting('phoneConversation', fresh);
     return fresh;
   };
+  // Voice notes: Chromium in the notch decodes/encodes the audio (renderer/shared/voicenotes.js); base64 crosses over.
+  const inNotch = (js) => windows.notch.webContents.executeJavaScript(js);
+  const samplesFrom = (b64) => new Float32Array(Uint8Array.from(Buffer.from(b64, 'base64')).buffer); // fresh, aligned copy
+  services.voiceCodec = {
+    decode: async (bytes) => samplesFrom(await inNotch(`window.mayaVoice.decodeVoice(${JSON.stringify(Buffer.from(bytes).toString('base64'))})`)),
+    encode: async ({ samples, sampleRate }) => {
+      const b64 = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength).toString('base64');
+      return { bytes: Buffer.from(await inNotch(`window.mayaVoice.encodeVoice(${JSON.stringify(b64)}, ${Number(sampleRate)})`), 'base64'), mime: 'audio/mp4' };
+    },
+  };
   services.telegram = createTelegram({
     store, secrets, onChange: () => windows.broadcast('data:changed'),
+    transcribe: async (bytes) => fixHeard(store, await ml.call('transcribe', await services.voiceCodec.decode(bytes), store.getSetting('listenLanguage', null))),
+    speak: async (text) => {
+      const audio = await speakReply(text, { ml, store, providers: services.providers });
+      return audio?.samples ? services.voiceCodec.encode(audio) : null;
+    },
     answer: async (text, { confirm }) => {
       const reply = await ask({ text, store, tools: [...allTools, ...services.mcpClient.tools()], services: { ...services, confirm }, conversationId: phoneConversation(), style: 'short' });
       windows.broadcast('data:changed');
@@ -209,7 +227,7 @@ app.whenReady().then(async () => {
     },
   });
   services.headMouse = {
-    set(on) { windows.headMouse(on ? { speed: store.getSetting('headMouseSpeed', 1), dwell: a11y().dwell, blink: a11y().blink } : null); return { on }; },
+    set(on) { windows.headMouse(on ? { speed: store.getSetting('headMouseSpeed', 1), dwell: a11y().dwell, blink: a11y().blink, faces: a11y().faceActions } : null); return { on }; },
     get on() { return windows.headMouseOpen; },
   };
   services.complete = (prompt) => complete(prompt);
@@ -369,6 +387,9 @@ app.whenReady().then(async () => {
     if (kind === 'reminder' || kind === 'care') services.telegram.notify(`⏰ ${title}: ${body}`);
   };
   startScheduler(store, notify);
+  // Watched web pages: checked when due; a change is a notification (and a Telegram message, like reminders).
+  services.watch = createWatches({ store, read: (url, max) => services.web.read(url, max), notify: (title, body) => notify(title, body, 'reminder') });
+  setInterval(() => services.watch.tick().then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 10 * 60_000);
   setInterval(() => careTick(store, (reason) => services.sos.notify(reason)).then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 60_000);
   // The evening "I'm okay" email to caregivers, when switched on (Accessibility page).
   setInterval(() => services.sos.dailyTick({
@@ -612,7 +633,7 @@ export function createWindows({ onQuit, onTray }) {
       backgroundColor: '#00000000', webPreferences: { preload, contextIsolation: true, sandbox: false, backgroundThrottling: false },
     });
     headWin.setAlwaysOnTop(true, 'screen-saver');
-    headWin.loadFile(page('headmouse'), { query: { speed: String(opts.speed || 1), dwell: String(opts.dwell || 0), blink: opts.blink ? '1' : '0' } });
+    headWin.loadFile(page('headmouse'), { query: { speed: String(opts.speed || 1), dwell: String(opts.dwell || 0), blink: opts.blink ? '1' : '0', faces: JSON.stringify(opts.faces || {}) } });
     headWin.on('closed', () => { headWin = null; });
   }
 
@@ -707,6 +728,7 @@ export function createWindows({ onQuit, onTray }) {
     toNotch: (channel, ...args) => send(notch, channel, ...args),
     toApp: (channel, ...args) => send(appWin, channel, ...args),
     broadcast: (channel, ...args) => { send(notch, channel, ...args); send(appWin, channel, ...args); },
+    toHeadMouse: (channel, ...args) => send(headWin, channel, ...args),
   };
 }
 ```
@@ -762,6 +784,7 @@ contextBridge.exposeInMainWorld('ather', {
   telegramSetToken: invoke('telegram:setToken'),
   telegramForget: invoke('telegram:forget'),
   telegramRemoveCaregiver: invoke('telegram:removeCaregiver'),
+  telegramVoiceReplies: invoke('telegram:voiceReplies'),
   onSos: on('sos'),
   onSession: on('session'),
   sessionExtend: invoke('session:extend'),
@@ -776,6 +799,12 @@ contextBridge.exposeInMainWorld('ather', {
   headMouseModel: invoke('headmouse:model'),
   headMouseClick: invoke('headmouse:click'),
   headMouseGesture: invoke('headmouse:gesture'),
+  headMouseGlance: invoke('headmouse:glance'),
+  headMouseAction: invoke('headmouse:action'),
+  noisePress: invoke('noise:press'),
+  onHeadGlance: on('head:glance'),
+  headMouseHold: invoke('headmouse:hold'),
+  onHeadMouseHold: on('headmouse:hold'),
   onApprovalGesture: on('approval:gesture'),
   headMouseMove: (x, y) => ipcRenderer.send('headmouse:move', x, y),
   pasteClip: invoke('clipboard:paste'),
@@ -926,7 +955,7 @@ import { careDone } from './services/scheduler.js';
 import { fixHeard, learnWord, wordFixes, saveFeedback, reflect } from './services/learning.js';
 import { learnSkill, saveSkill } from './services/skills.js';
 import { workToday } from './services/worklog.js';
-import { chromeProfiles } from './services/pc.js';
+import { chromeProfiles, faceAction } from './services/pc.js';
 import { finishDictation } from './services/dictate.js';
 import { interpretTurn } from './services/interpreter.js';
 import { pasteText, pasteClip } from './dictation.js';
@@ -1073,6 +1102,14 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
     services.lastVoice = Date.now();
     return services.voiceControl.run(c);
   });
+  // Mouth-noise switch (Accessibility page): a pop selects while scanning; otherwise it starts scanning or clicks.
+  handle('noise:press', () => {
+    if (lock.locked) return { ignored: 'locked' };
+    const how = store.getSetting('a11y', {}).noiseSwitch || 'off';
+    if (how === 'off') return { ignored: 'off' };
+    if (services.voiceControl.mode === 'scan') return services.voiceControl.press();
+    return how === 'click' ? services.pc.clickHere('left') : services.voiceControl.run({ cmd: 'scan', on: true });
+  });
   ipcMain.handle('sos:trigger', (_, reason) => services.sos.trigger(reason || 'pressed the help button'));
   ipcMain.handle('sos:cancel', () => services.sos.cancel());
   ipcMain.handle('sos:stop', () => services.sos.stopAlarm());
@@ -1088,6 +1125,7 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('telegram:setToken', async (token) => { const s = await services.telegram.setToken(token); services.telegram.start(); return s; });
   handle('telegram:forget', () => { services.telegram.forget(); return services.telegram.status(); });
   handle('telegram:removeCaregiver', (id) => { services.telegram.removeCaregiver(id); return services.telegram.status(); });
+  handle('telegram:voiceReplies', (mode) => { services.telegram.setVoiceReplies(mode); return services.telegram.status(); });
   ipcMain.on('voice:heard', () => { services.lastVoice = Date.now(); });
   handle('headmouse:set', (on) => services.headMouse.set(on));
   handle('headmouse:model', async () => readFileSync(await downloadFile('facemesh')));
@@ -1253,6 +1291,10 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('chrome:profiles', () => chromeProfiles());
   // Nod / shake in the head mouse answers the oldest open approval card (in the face window or the app).
   handle('headmouse:gesture', (g) => { windows.broadcast('approval:gesture', g === 'yes'); return true; });
+  // Speak for me: glances go to the board; the board asks the head mouse to hold the cursor still meanwhile.
+  handle('headmouse:action', (action) => faceAction(services.pc, action));
+  handle('headmouse:glance', (side) => { windows.broadcast('head:glance', side === 'left' ? 'left' : 'right'); return true; });
+  handle('headmouse:hold', (on) => { windows.toHeadMouse('headmouse:hold', !!on); return windows.headMouseOpen; });
   handle('transcribe:quick', (audio) => ml.call('transcribeQuick', audio));
   handle('dictation:result', async (audio) => {
     const heard = fixHeard(store, await ml.call('transcribe', audio, listenLanguage()));
@@ -1537,6 +1579,10 @@ import { listenOnce, watchForInterrupt, isStopPhrase, matchWake, greeting, nextS
 import { detectEmotion, afterFeeling } from './shared/emotion.js';
 import { parseCommand, parseYesNo } from './shared/voicecommands.js';
 import { workMood } from './shared/work.js';
+import { startNoiseSwitch } from './shared/noiseswitch.js';
+import { installVoiceHelpers } from './shared/voicenotes.js';
+
+installVoiceHelpers(); // Telegram voice notes are decoded / voice replies recorded here (always open, never throttled)
 import './shared/base.css';
 import './notch.css';
 
@@ -1775,6 +1821,21 @@ function Notch() {
     })();
     return () => controller.abort();
   }, [wakeOn, voiceMode, recording, locked]);
+
+  // ---- mouth-noise switch (Accessibility page): a lip pop or tongue click presses the switch ----
+  const [noise, setNoise] = useState({ how: 'off', sensitivity: 'normal' });
+  useEffect(() => {
+    const read = (a) => setNoise({ how: a?.noiseSwitch || 'off', sensitivity: a?.noiseSensitivity || 'normal' });
+    ather.getSetting('a11y', {}).then(read);
+    return ather.onSettingsChanged((key, value) => key === 'a11y' && read(value));
+  }, []);
+  useEffect(() => {
+    if (noise.how === 'off') return undefined;
+    let stop = null, cancelled = false;
+    startNoiseSwitch({ sensitivity: noise.sensitivity, onPress: () => { ather.noisePress().catch(() => {}); flash('nod', 400); } })
+      .then((s) => { if (cancelled) s(); else stop = s; }).catch(() => {});
+    return () => { cancelled = true; stop?.(); };
+  }, [noise.how, noise.sensitivity]);
 
   // ---- approvals by voice: someone who can only speak cannot click Allow ----
   const wakeRef = useRef(false);
@@ -3510,6 +3571,7 @@ createRoot(document.getElementById('root')).render(<Overlay />);
 ```jsx
 import { useEffect, useState } from 'react';
 import { useSetting } from './Settings.jsx';
+import { FACE_GESTURES, FACE_ACTIONS } from '../shared/headpose.js';
 
 const A11Y_DEFAULTS = { dwell: 0, switchKey: 'F9', scanMs: 1200, keyboardLayout: 'en', keyboardSize: 1 };
 const SOS_DEFAULTS = { contacts: [], phones: [], shareLocation: false, daily: { on: false, time: '20:00' }, name: '', note: '', checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' }, medical: {} };
@@ -3622,6 +3684,19 @@ export default function Accessibility() {
             Blink to click: close both eyes for half a second to click, 1.5 seconds to right-click (normal blinks are ignored)</label>
           {a.dwell > 0 && <label className="field">Hold still for {(a.dwell / 1000).toFixed(1)} s
             <input type="range" min="500" max="3000" step="100" value={a.dwell} onChange={(e) => setA({ dwell: Number(e.target.value) })} onMouseUp={restartHeadMouse} aria-label="Dwell time" /></label>}
+          <details className="field">
+            <summary>😉 Face gestures: more actions without your hands</summary>
+            <p className="muted">Hold the face for a moment to act. Leave a gesture on “Nothing” if it happens by accident.</p>
+            <div className="medical-grid">
+              {FACE_GESTURES.map(([k, label]) => (
+                <div className="field" key={k}><label htmlFor={`fg-${k}`}>{label}</label>
+                  <select id={`fg-${k}`} className="input" value={a.faceActions?.[k] || 'none'}
+                    onChange={(e) => { setA({ faceActions: { ...a.faceActions, [k]: e.target.value } }); setTimeout(restartHeadMouse, 300); }}>
+                    {FACE_ACTIONS.map(([v, name]) => <option key={v} value={v}>{name}</option>)}
+                  </select></div>
+              ))}
+            </div>
+          </details>
         </section>
 
         <section className="panel" aria-labelledby="a11y-kb">
@@ -3652,6 +3727,19 @@ export default function Accessibility() {
             <label className="field" style={{ flex: 1 }}>Speed: {(a.scanMs / 1000).toFixed(1)} s each
               <input type="range" min="600" max="3000" step="100" value={a.scanMs} onChange={(e) => setA({ scanMs: Number(e.target.value) })} aria-label="Scanning speed" /></label>
           </div>
+          <div className="row wrap">
+            <div className="field" style={{ flex: 2 }}><label htmlFor="sw-n">👄 Mouth sound as the switch (a lip pop or tongue click)</label>
+              <select id="sw-n" className="input" value={a.noiseSwitch || 'off'} onChange={(e) => setA({ noiseSwitch: e.target.value })}>
+                <option value="off">Off</option>
+                <option value="scan">Switch (scan, then select)</option>
+                <option value="click">Click at the pointer</option>
+              </select></div>
+            <div className="field" style={{ flex: 1 }}><label htmlFor="sw-ns">Sensitivity</label>
+              <select id="sw-ns" className="input" value={a.noiseSensitivity || 'normal'} onChange={(e) => setA({ noiseSensitivity: e.target.value })} disabled={(a.noiseSwitch || 'off') === 'off'}>
+                <option value="low">Low (noisy room)</option><option value="normal">Normal</option><option value="high">High (quiet pops)</option>
+              </select></div>
+          </div>
+          {(a.noiseSwitch || 'off') !== 'off' && <p className="muted">Talking, coughing and music are ignored: only a short, sharp sound after a moment of quiet counts. The microphone sound stays on this PC.</p>}
         </section>
 
         <section className="panel sos-panel" aria-labelledby="a11y-sos">
@@ -3734,6 +3822,241 @@ export default function Accessibility() {
     </>
   );
 }
+```
+
+### src/renderer/app/Speak.jsx
+
+```jsx
+// Speak for me: a phrase board for people who cannot speak clearly. Click, dwell or scan to a phrase, or choose by
+// looking (as in look-to-speak): glance left or right (or press ←/→, or two switches) until one phrase is left.
+import { useEffect, useRef, useState } from 'react';
+import { playSpeech } from '../shared/audio.js';
+import { useSetting } from './Settings.jsx';
+import { DEFAULT_PHRASES, halves, narrow } from '../shared/speakboard.js';
+
+export default function Speak() {
+  const [saved, setSaved] = useSetting('speakPhrases', DEFAULT_PHRASES);
+  const phrases = saved?.length ? saved : DEFAULT_PHRASES;
+  const [said, setSaid] = useState('');
+  const [look, setLook] = useState(null); // null = off; otherwise the phrases still in play
+  const [headOn, setHeadOn] = useState(true);
+  const [draft, setDraft] = useState('');
+  const lookRef = useRef(null);
+  lookRef.current = look;
+
+  const say = async (text) => {
+    setSaid(text);
+    try { const audio = await window.ather.speak(text); if (audio) playSpeech(audio); } catch { /* the words stay on screen */ }
+  };
+  const choose = (side) => {
+    if (!lookRef.current) return;
+    const next = narrow(lookRef.current, side);
+    if (next.length === 1) { say(next[0]); setLook(phrases); } else setLook(next);
+  };
+  const start = async () => {
+    setLook(phrases);
+    setHeadOn(!!(await window.ather.headMouseHold(true).catch(() => false)));
+  };
+  const stop = () => { setLook(null); window.ather.headMouseHold(false).catch(() => {}); };
+  const headMouseOn = async () => { await window.ather.headMouseSet(true); setTimeout(async () => setHeadOn(!!(await window.ather.headMouseHold(true).catch(() => false))), 1500); };
+
+  useEffect(() => window.ather.onHeadGlance?.((side) => choose(side)), [phrases]);
+  useEffect(() => {
+    if (!look) return undefined;
+    // ←/→ act as two switches; Esc stops.
+    const key = (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); choose(e.key === 'ArrowLeft' ? 'left' : 'right'); }
+      else if (e.key === 'Escape') stop();
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [look]);
+  useEffect(() => () => { window.ather.headMouseHold?.(false).catch(() => {}); }, []); // leaving the page frees the cursor
+
+  const add = (e) => { e.preventDefault(); const t = draft.trim(); if (t && !phrases.includes(t)) setSaved([...phrases, t]); setDraft(''); };
+  const [left, right] = look ? halves(look) : [[], []];
+
+  return (
+    <>
+      <h1 className="page-title">Speak for me</h1>
+      <p className="page-sub">Pick a phrase and Maya says it out loud (Tamil phrases in the Tamil voice). Click it, hold the head mouse on it, scan to it, or choose by looking.</p>
+      <p className="said" aria-live="assertive">{said || ' '}</p>
+
+      {look ? (
+        <section className="panel" aria-label="Choose by looking">
+          {!headOn && (
+            <p className="muted">The head mouse is off: use the <kbd>←</kbd> and <kbd>→</kbd> keys (or two switches), or{' '}
+              <button className="btn small" onClick={headMouseOn}>turn on the head mouse</button></p>
+          )}
+          <div className="look-cols">
+            {[['left', '← Look left', left], ['right', 'Look right →', right]].map(([side, label, items]) => (
+              <button key={side} className="look-col" onClick={() => choose(side)} disabled={!items.length} aria-label={`${label}: ${items.join(', ')}`}>
+                <b>{label}</b>
+                <ul>{items.map((p) => <li key={p}>{p}</li>)}</ul>
+              </button>
+            ))}
+          </div>
+          <button className="btn" onClick={stop}>Stop choosing by looking</button>
+        </section>
+      ) : (
+        <>
+          <div className="row wrap"><button className="btn primary big-btn" onClick={start}>👀 Choose by looking</button></div>
+          <div className="phrase-grid">
+            {phrases.map((p) => (
+              <div className="phrase-cell" key={p}>
+                <button className="phrase" onClick={() => say(p)}>{p}</button>
+                <button className="btn small ghost" onClick={() => setSaved(phrases.filter((x) => x !== p))} aria-label={`Remove “${p}”`}>✕</button>
+              </div>
+            ))}
+          </div>
+          <form className="row wrap" onSubmit={add}>
+            <input className="input" style={{ flex: 1, minWidth: 220 }} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a phrase, e.g. Please open the window" aria-label="New phrase" />
+            <button className="btn" disabled={!draft.trim()}>Add</button>
+          </form>
+        </>
+      )}
+    </>
+  );
+}
+```
+
+### src/renderer/shared/speakboard.js
+
+```javascript
+// "Speak for me" board logic (as in look-to-speak): the phrases are split into a left and a right half; each glance
+// (or the left/right arrow keys, or two switches) keeps one half until a single phrase is left, which Maya says aloud.
+
+export const DEFAULT_PHRASES = [
+  'Please give me some water',
+  'I am in pain',
+  'I need the toilet',
+  'Please call Amma',
+  'I am cold',
+  'I am hungry',
+  'Please help me sit up',
+  'Yes',
+  'No',
+  'Thank you',
+  'எனக்கு தண்ணீர் வேண்டும்',
+  'அம்மாவை கூப்பிடுங்கள்',
+];
+
+/** [left, right]: the left half gets the extra phrase. */
+export const halves = (list) => { const mid = Math.ceil(list.length / 2); return [list.slice(0, mid), list.slice(mid)]; };
+
+/** The half the user glanced at; a half with nothing in it keeps the list as it is. */
+export function narrow(list, side) {
+  const [left, right] = halves(list);
+  const kept = side === 'left' ? left : right;
+  return kept.length ? kept : list;
+}
+```
+
+### src/renderer/shared/noiseswitch.js
+
+```javascript
+// Mouth-noise switch (as in Talon's "pop"): a short, sharp sound such as a lip pop or tongue click presses the switch,
+// for people who can neither speak clearly nor move their head. Speech, coughs and music are longer, so they do not count.
+
+/** Peak levels (0..1) a pop must reach, and below which the room counts as quiet. */
+export const SENSITIVITY = {
+  low: { threshold: 0.4, quiet: 0.1 },
+  normal: { threshold: 0.25, quiet: 0.06 },
+  high: { threshold: 0.12, quiet: 0.04 },
+};
+
+/**
+ * Feed it the peak level every ~20 ms; it returns true once per pop: a burst over `threshold` lasting at most `maxMs`,
+ * after at least `preQuietMs` of quiet, and at least `gapMs` after the last pop. Pure, so it is unit tested.
+ */
+export function createNoiseSwitch({ threshold = SENSITIVITY.normal.threshold, quiet = SENSITIVITY.normal.quiet, maxMs = 150, preQuietMs = 250, gapMs = 600 } = {}) {
+  let quietFrom = null, burst = null, last = -Infinity;
+  return (level, t) => {
+    if (burst) {
+      if (level >= quiet) { if (t - burst.start > maxMs) burst.ok = false; return false; }
+      const fire = burst.ok && t - last >= gapMs;
+      burst = null; quietFrom = t;
+      if (fire) last = t;
+      return fire;
+    }
+    if (level >= threshold) { burst = { start: t, ok: quietFrom !== null && t - quietFrom >= preQuietMs }; return false; }
+    if (level >= quiet) { quietFrom = null; return false; }
+    quietFrom ??= t;
+    return false;
+  };
+}
+
+/** Listens to the microphone and calls onPress for each pop; returns stop(). Noise suppression would remove the pops. */
+export async function startNoiseSwitch({ onPress, sensitivity = 'normal' }) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const ctx = new AudioContext();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  const buf = new Float32Array(analyser.fftSize);
+  const detect = createNoiseSwitch(SENSITIVITY[sensitivity] || SENSITIVITY.normal);
+  const timer = setInterval(() => {
+    analyser.getFloatTimeDomainData(buf);
+    let peak = 0;
+    for (const v of buf) peak = Math.max(peak, Math.abs(v));
+    if (detect(peak, performance.now())) onPress();
+  }, 20);
+  return () => { clearInterval(timer); stream.getTracks().forEach((t) => t.stop()); ctx.close(); };
+}
+```
+
+### src/renderer/shared/voicenotes.js
+
+```javascript
+// Telegram voice notes, done with Chromium's own audio code (no extra library): decode a phone's Ogg/Opus note to
+// 16 kHz samples for Whisper, and record Maya's spoken answer as M4A (Telegram plays it as a voice message).
+// The main process calls these in the notch window (window.mayaVoice) with base64, the only safe way across.
+
+const toBase64 = (buffer) => {
+  const bytes = new Uint8Array(buffer);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+const fromBase64 = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+
+/** Any audio file (base64) → 16 kHz mono Float32 samples (base64). */
+export async function decodeVoice(b64) {
+  const ctx = new AudioContext();
+  const decoded = await ctx.decodeAudioData(fromBase64(b64).buffer).finally(() => ctx.close());
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * 16000)), 16000);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  return toBase64((await off.startRendering()).getChannelData(0).buffer);
+}
+
+/** Float32 samples (base64) at sampleRate → an M4A file (base64), recorded in real time. */
+export async function encodeVoice(b64, sampleRate) {
+  const samples = new Float32Array(fromBase64(b64).buffer);
+  const ctx = new AudioContext({ sampleRate });
+  await ctx.resume();
+  const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+  buffer.copyToChannel(samples, 0);
+  const dest = ctx.createMediaStreamDestination();
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(dest);
+  const rec = new MediaRecorder(dest.stream, { mimeType: 'audio/mp4' });
+  const parts = [];
+  rec.ondataavailable = (e) => parts.push(e.data);
+  const stopped = new Promise((r) => { rec.onstop = r; });
+  rec.start();
+  src.start();
+  await new Promise((r) => { src.onended = r; });
+  rec.stop();
+  await stopped;
+  ctx.close();
+  return toBase64(await new Blob(parts).arrayBuffer());
+}
+
+export const installVoiceHelpers = () => { window.mayaVoice = { decodeVoice, encodeVoice }; };
 ```
 
 ### src/main/services/scanning.js
@@ -4114,8 +4437,14 @@ export const splitMessage = (text) => {
 
 const newCode = () => String(randomInt(100000, 1000000));
 
-export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChange = () => {} }) {
-  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, caregivers: [], caregiverCode: '', ...store.getSetting('telegram', {}) });
+const VOICE_REPLIES = ['voice-notes', 'always', 'never'];
+
+/**
+ * transcribe(bytes) → text: a voice note from the phone, heard on this PC (Whisper).
+ * speak(text) → { bytes, mime } | null: Maya's answer as audio for a voice reply.
+ */
+export function createTelegram({ store, secrets, answer, transcribe = null, speak = null, fetchFn = fetch, onChange = () => {} }) {
+  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, caregivers: [], caregiverCode: '', voiceReplies: 'voice-notes', ...store.getSetting('telegram', {}) });
   const save = (patch) => { store.setSetting('telegram', { ...state(), ...patch }); onChange(); };
   let running = false, error = null;
 
@@ -4127,10 +4456,24 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     return data.result;
   }
   const send = async (chatId, text) => { for (const part of splitMessage(text)) await call('sendMessage', { chat_id: chatId, text: part }); };
+  async function download(fileId) {
+    const { file_path: path } = await call('getFile', { file_id: fileId });
+    const res = await fetchFn(`https://api.telegram.org/file/bot${secrets.get('telegram-token')}/${path}`, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`Telegram file: error ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+  async function sendVoice(chatId, { bytes, mime }) {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('voice', new Blob([bytes], { type: mime }), mime === 'audio/mp4' ? 'maya.m4a' : 'maya.ogg');
+    const res = await fetchFn(`${API}${secrets.get('telegram-token')}/sendVoice`, { method: 'POST', body: form, signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`Telegram: voice reply failed (${res.status})`);
+  }
 
   async function handle(msg) {
-    const chatId = msg.chat?.id, text = String(msg.text || '').trim();
-    if (!chatId || !text) return;
+    const chatId = msg.chat?.id, voiceId = msg.voice?.file_id || msg.audio?.file_id;
+    let text = String(msg.text || '').trim();
+    if (!chatId || (!text && !voiceId)) return;
     const s = state();
     const who = s.chat || 'the Maya user';
     // Caregivers get alerts only: their messages never reach the AI or the user's data.
@@ -4148,6 +4491,14 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
       return send(chatId, '✅ Paired! I am Maya. Ask me anything, or tell me to add a task, a reminder or a note. Things that need your OK (mouse and keyboard, sending mail) must be approved on the PC.');
     }
     if (chatId !== s.ownerId) return; // strangers get nothing, not even a hint that the bot works
+    // A voice note: heard on this PC (nothing goes to a cloud), then answered like typed text.
+    if (!text && voiceId) {
+      if (!transcribe) return send(chatId, 'Voice notes do not work on this Maya yet: please type your message.');
+      text = String(await transcribe(await download(voiceId)) || '').trim();
+      if (!text) return send(chatId, 'Sorry, I could not hear any words in that voice note. Please try again a little closer to the phone.');
+      await send(chatId, `🎙️ “${text}”`);
+    }
+    const byVoice = s.voiceReplies === 'always' || (s.voiceReplies === 'voice-notes' && !!voiceId);
     const refused = [];
     let reply;
     try {
@@ -4155,6 +4506,10 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     } catch (e) { reply = `Sorry, that did not work: ${e.message}`; }
     if (refused.length) reply += `\n\n🔒 For safety, approve ${[...new Set(refused)].map((n) => n.replace(/_/g, ' ')).join(', ')} on the PC.`;
     await send(chatId, reply);
+    if (byVoice && speak) {
+      const audio = await speak(reply).catch(() => null); // the text answer above is already there if this fails
+      if (audio) await sendVoice(chatId, audio).catch(() => {});
+    }
   }
 
   /** One round of long polling: handles every new message once; false when Telegram could not be reached. */
@@ -4180,7 +4535,12 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     status: () => {
       const s = state();
       return { configured: !!secrets.get('telegram-token'), bot: s.bot, paired: !!s.ownerId, chat: s.chat, code: s.ownerId ? '' : s.code,
-        caregivers: s.caregivers, caregiverCode: s.caregiverCode, running, error };
+        caregivers: s.caregivers, caregiverCode: s.caregiverCode, voiceReplies: s.voiceReplies, running, error };
+    },
+    /** When Maya answers on Telegram by voice too: 'voice-notes' (after you send one), 'always' or 'never'. */
+    setVoiceReplies(mode) {
+      if (!VOICE_REPLIES.includes(mode)) throw new Error(`Voice replies must be one of: ${VOICE_REPLIES.join(', ')}`);
+      save({ voiceReplies: mode });
     },
     /** Sends an alert (SOS, missed medicine, daily update) to every caregiver; the number reached. Never throws. */
     async alertCaregivers(text) {
@@ -4527,6 +4887,7 @@ import Models from './app/Models.jsx';
 import Mcp from './app/Mcp.jsx';
 import Workflows from './app/Workflows.jsx';
 import Accessibility from './app/Accessibility.jsx';
+import Speak from './app/Speak.jsx';
 import Skills from './app/Skills.jsx';
 import Monitor from './app/Monitor.jsx';
 import Agent from './app/Agent.jsx';
@@ -4541,6 +4902,7 @@ const SECTIONS = [
   ['home', 'Home', '🏠', Home],
   ['chat', 'Chat', '💬', Chat],
   ['accessibility', 'Accessibility', '♿', Accessibility],
+  ['speak', 'Speak for me', '🗣️', Speak],
   ['brain', 'Brain', '🧠', Brain],
   ['agent', 'My Maya', '🤖', Agent],
   ['connections', 'Connections', '🔗', Connections],
@@ -4836,6 +5198,18 @@ textarea.input { resize: vertical; min-height: 120px; }
 .cmds td { padding: 5px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .sos-panel { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 .big-sos { font-size: 18px; padding: 14px 26px; background: var(--bad); color: #fff; border-color: var(--bad); }
+/* Speak for me */
+.said { font-size: 34px; font-weight: 700; min-height: 46px; margin: 4px 0 14px; }
+.phrase-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin: 14px 0; }
+.phrase-cell { display: flex; gap: 6px; align-items: stretch; }
+.phrase { flex: 1; font-family: inherit; font-size: 20px; font-weight: 600; line-height: 1.3; padding: 18px 16px; text-align: left; border-radius: var(--radius); border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+.phrase:hover, .phrase:focus-visible { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.big-btn { font-size: 18px; padding: 12px 22px; }
+.look-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 10px 0 14px; }
+.look-col { text-align: left; font: inherit; color: var(--ink); background: var(--card); border: 2px solid var(--accent); border-radius: var(--radius); padding: 14px 18px; cursor: pointer; min-height: 220px; }
+.look-col b { font-size: 22px; display: block; margin-bottom: 8px; }
+.look-col ul { margin: 0; padding-left: 20px; font-size: 20px; line-height: 1.6; }
+.look-col:disabled { opacity: .35; }
 .pair-code { display: inline-block; margin-top: 8px; font: 700 32px/1.2 ui-monospace, Consolas, monospace; letter-spacing: 6px; padding: 6px 14px; border: 2px dashed var(--accent); border-radius: var(--radius); }
 .steps { margin: 0 0 8px; padding-left: 20px; }
 .pair-code.small-code { font-size: 20px; letter-spacing: 4px; padding: 2px 10px; margin-top: 4px; }
@@ -6502,6 +6876,7 @@ const GROUPS = [
   [/\b(captions?|subtitles?|translate (this|the) (video|audio|call|class)|what (are|is) they saying)/i, /^captions_/],
   [/\b(wheel ?chair|accessible|ramps?|step-?free|near me|nearby|nearest|closest|around here)\b/i, /^places_accessible$/],
   [/\b(medical (id|info|details)|blood (group|type)|allerg|my (health )?conditions?|my doctor)/i, /^medical_id$/],
+  [/\b(watch(ing)?|monitor|keep an eye on|tell me when|let me know when|notify me when)\b.{0,60}\b(page|site|website|link|price|results?|notice|https?:)|\bwatched pages?\b/i, /^watch_/],
   [/\b((in|on|into) (whatsapp|notepad|word|excel|telegram|teams|outlook|paint|settings|chrome|edge|google|youtube|gmail|the app|the browser|this (app|window|page))|type (?!of\b)\S|write .+ (in|into|on) |click\b|select\b|open .+ (and|then) (type|search|write|click|send|play|calculate|work out|draw|drag|rename|edit)|(use|using|with) (the |my )?(mouse|keyboard)|fill (in|out|this)|(message|text|whatsapp) \w+|send (a|the|my)? ?message|(take )?control (of )?(my|the) (pc|computer|laptop)|use my (pc|computer|laptop)|do it for me|go to|scroll (up|down)|press (enter|the|ctrl)|(search|look up) .* (in|on) (chrome|google|youtube|edge))/i, /^computer_/],
 ];
 
@@ -7208,6 +7583,16 @@ export default function Connections({ go, version }) {
   const [providers, setProviders] = useState([]);
   const [msg, setMsg] = useState(null);
   const [tg, setTg] = useState(null);
+  const [watches, setWatches] = useState([]);
+  const [watchUrl, setWatchUrl] = useState('');
+  const [watchWhat, setWatchWhat] = useState('');
+  const loadWatches = () => window.ather.tool('watch_list', {}).then(setWatches).catch(() => {});
+  useEffect(() => { loadWatches(); }, [version]);
+  const addWatch = async (e) => {
+    e.preventDefault();
+    try { await window.ather.tool('watch_add', { url: watchUrl, what: watchWhat || watchUrl }); setWatchUrl(''); setWatchWhat(''); setMsg('✓ Watching it: the first check is within 10 minutes.'); loadWatches(); }
+    catch (err) { setMsg(`⚠ ${errText(err)}`); }
+  };
   const [token, setToken] = useState('');
   useEffect(() => { window.ather.telegramStatus?.().then(setTg).catch(() => {}); }, [version]);
   const connectTelegram = async (e) => {
@@ -7279,6 +7664,12 @@ export default function Connections({ go, version }) {
             <p>Now open <b>@{tg.bot}</b> in Telegram on your phone and send this code:<br /><span className="pair-code" aria-label={`Pairing code ${tg.code.split('').join(' ')}`}>{tg.code}</span></p>
           )}
           {tg?.configured && (
+            <div className="field"><label htmlFor="tg-voice">🎙️ Send Maya voice notes; she hears them on this PC. Answer by voice:</label>
+              <select id="tg-voice" className="input" value={tg.voiceReplies || 'voice-notes'} onChange={async (e) => setTg(await window.ather.telegramVoiceReplies(e.target.value))}>
+                <option value="voice-notes">After my voice notes</option><option value="always">Always</option><option value="never">Never (text only)</option>
+              </select></div>
+          )}
+          {tg?.configured && (
             <div className="field">
               <b>👥 Caregivers</b> <span className="muted">get SOS alerts (with your Medical ID), missed medicines and the daily update. They cannot use Maya or see your data.</span>
               {!!tg.caregivers?.length && <ul className="list">{tg.caregivers.map((c) => (
@@ -7290,6 +7681,19 @@ export default function Connections({ go, version }) {
           )}
           {tg?.error && <p className="muted" role="status">⚠ {tg.error}</p>}
           {tg?.configured && <button className="btn small" onClick={async () => setTg(await window.ather.telegramForget())}>Disconnect Telegram</button>}
+        </Card>
+
+        <Card icon="🔔" name="Watch a website" on={watches.length > 0}
+          detail="Maya re-reads a page every few hours and tells you when it changes (also on Telegram): exam results, a notice, a price." say="tell me when https://… changes">
+          {!!watches.length && <ul className="list">{watches.map((w) => (
+            <li className="item" key={w.id}><span className="item-title"><b>{w.what}</b> <small className="muted">{w.error ? `⚠ ${w.error}` : w.checked ? `checked ${new Date(w.checked).toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}` : 'first check soon'} · every {w.every_hours} h</small></span>
+              <button className="btn small" onClick={() => window.ather.tool('watch_remove', { which: w.id }).then(loadWatches)} aria-label={`Stop watching ${w.what}`}>Stop</button></li>
+          ))}</ul>}
+          <form className="row wrap" onSubmit={addWatch}>
+            <input className="input" style={{ width: 150 }} placeholder="Name (e.g. Results)" value={watchWhat} onChange={(e) => setWatchWhat(e.target.value)} aria-label="Watch name" />
+            <input className="input" style={{ flex: 1, minWidth: 200 }} placeholder="https://…" value={watchUrl} onChange={(e) => setWatchUrl(e.target.value)} aria-label="Page to watch" />
+            <button className="btn primary" disabled={!watchUrl.trim()}>Watch</button>
+          </form>
         </Card>
 
         <Card icon="🔌" name="More tools (MCP)" on detail="GitHub, files, browser automation, docs and more, as connected tools Maya can use." >
@@ -8669,6 +9073,18 @@ export function describeWindow(process, title) {
 }
 
 /** scale() is the main screen's scale factor (1.25 at 125%), from Electron; control positions come back in scaled pixels. */
+/** Carries out a face gesture's action at the pointer (the list is FACE_ACTIONS in renderer/shared/headpose.js). */
+export async function faceAction(pc, action) {
+  const run = {
+    click: () => pc.clickHere('left'), right: () => pc.clickHere('right'),
+    double: async () => { await pc.clickHere('left'); await pc.clickHere('left'); },
+    scrollUp: () => pc.scroll(360), scrollDown: () => pc.scroll(-360),
+    enter: () => pc.keys('{ENTER}'), escape: () => pc.keys('{ESC}'), tab: () => pc.keys('{TAB}'),
+  }[action];
+  if (!run) throw new Error(`Unknown face action "${action}"`);
+  return run();
+}
+
 export function createPc({ shell, scale = () => 1, chromeChoice = () => null }) {
   let child = null;
   let seq = 0;
@@ -9491,12 +9907,13 @@ import { useEffect, useRef, useState } from 'react';
 import { FaceLandmarker } from '@mediapipe/tasks-vision';
 import wasmLoader from '../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.js?url';
 import wasmBinary from '../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm?url';
-import { headDirection, createPointer, createGestures, createDwell, createBlink, createHeadGesture } from './shared/headpose.js';
+import { headDirection, createPointer, createGestures, createDwell, createBlink, createHeadGesture, createGlance, createFaceActions } from './shared/headpose.js';
 
 const query = new URLSearchParams(location.search);
 const speed = Number(query.get('speed')) || 1;
 const dwellMs = Number(query.get('dwell')) || 0; // 0 = dwell click off
 const blinkOn = query.get('blink') === '1';
+const faceMap = (() => { try { return JSON.parse(query.get('faces') || '{}'); } catch { return {}; } })(); // Accessibility page choices
 
 function HeadMouse() {
   const video = useRef(null);
@@ -9506,6 +9923,9 @@ function HeadMouse() {
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   pausedRef.current = paused;
+  // "Speak for me" look mode: the cursor stays still (no moves, no clicks) and only left/right glances are sent.
+  const holdRef = useRef(false);
+  useEffect(() => window.ather.onHeadMouseHold?.((on) => { holdRef.current = !!on; }), []);
 
   useEffect(() => {
     let stop = false, stream, landmarker;
@@ -9513,6 +9933,8 @@ function HeadMouse() {
     const dwell = dwellMs ? createDwell({ ms: dwellMs }) : null;
     const blink = blinkOn ? createBlink() : null;
     const nod = createHeadGesture(); // nod = yes, shake = no on an approval card
+    const glance = createGlance(); // look left / look right on the Speak for me board
+    const faceActions = createFaceActions({ map: faceMap }); // eyebrows, mouth left/right, pucker → the chosen action
     let lastRing = 0;
     (async () => {
       try {
@@ -9536,7 +9958,14 @@ function HeadMouse() {
             const r = landmarker.detectForVideo(v, now);
             const lm = r.faceLandmarks?.[0];
             if (!lm) { setState(''); setStatus('No face found: sit in front of the camera.'); }
+            else if (!pausedRef.current && holdRef.current) {
+              const side = glance(headDirection(lm), now);
+              if (side) window.ather.headMouseGlance(side);
+              setState('on');
+              setStatus('Look left or right to choose');
+            }
             else if (!pausedRef.current) {
+              glance(headDirection(lm), now); // keeps its calibration current
               const scores = Object.fromEntries((r.faceBlendshapes?.[0]?.categories || []).map((c) => [c.categoryName, c.score]));
               const g = gestures(scores, now);
               const b = blink?.(scores, now);
@@ -9552,6 +9981,8 @@ function HeadMouse() {
                 if (ring !== lastRing) { lastRing = ring; window.ather.headMouseDwell(ring < 1 ? ring : 0); }
                 if (d?.click) { window.ather.headMouseClick('left'); setState('click'); setTimeout(() => setState('on'), 300); }
               }
+              const fa = g.click ? null : faceActions(scores, now);
+              if (fa) { window.ather.headMouseAction(fa).catch(() => {}); setState('click'); setTimeout(() => setState('on'), 300); }
               if (g.click) { window.ather.headMouseClick(g.click); setState('click'); setTimeout(() => setState('on'), 300); }
               else setState((s) => (s === 'click' ? s : 'on'));
               setStatus(pointer.current.calibrating ? 'Look at the screen centre…' : (dwellMs ? 'Turn your head to move · hold still to click · smile = right-click' : 'Turn your head to move · open mouth = click · smile = right-click'));
@@ -9621,6 +10052,61 @@ export function createPointer({ speed = 1, smooth = 0.35, calibrate = 15 } = {})
       pos = { x: clamp(pos.x + (target.x - pos.x) * smooth), y: clamp(pos.y + (target.y - pos.y) * smooth) };
       return pos;
     },
+  };
+}
+
+/** Extra face gestures (as in Project Gameface) and how to tell them from the face's blendshape scores. */
+export const FACE_GESTURES = [
+  ['browUp', 'Raise eyebrows', (s) => (s.browInnerUp ?? 0) > 0.5],
+  ['mouthLeft', 'Mouth to the left', (s) => (s.mouthLeft ?? 0) > 0.45],
+  ['mouthRight', 'Mouth to the right', (s) => (s.mouthRight ?? 0) > 0.45],
+  ['pucker', 'Pucker lips (kiss)', (s) => (s.mouthPucker ?? 0) > 0.6 && (s.jawOpen ?? 0) < 0.2],
+];
+/** What a gesture can do (services/pc.js faceAction carries them out). */
+export const FACE_ACTIONS = [['none', 'Nothing'], ['click', 'Click'], ['right', 'Right-click'], ['double', 'Double-click'],
+  ['scrollUp', 'Scroll up'], ['scrollDown', 'Scroll down'], ['enter', 'Enter'], ['escape', 'Esc'], ['tab', 'Tab']];
+
+/**
+ * The user's chosen face gestures → actions: each fires once per gesture held `hold` ms, at most once per `cooldown`.
+ * Gestures set to "none" (the default) are ignored, so ordinary expressions never act on their own.
+ */
+export function createFaceActions({ map = {}, hold = 300, cooldown = 800 } = {}) {
+  const used = FACE_GESTURES.filter(([k]) => map[k] && map[k] !== 'none');
+  const since = {}, fired = {};
+  let last = -Infinity;
+  return (s, t) => {
+    let action = null;
+    for (const [k, , on] of used) {
+      if (!on(s)) { since[k] = null; fired[k] = false; continue; }
+      since[k] ??= t;
+      if (!action && !fired[k] && t - since[k] >= hold && t - last >= cooldown) { fired[k] = true; last = t; action = map[k]; }
+    }
+    return action;
+  };
+}
+
+/**
+ * Glance (as in "look to speak"): a deliberate head turn left or right, held for `hold` ms, gives 'left' or 'right' once.
+ * Small moves (under `amp` from the calibrated straight-ahead) and quick twitches do nothing; the head must come back
+ * near the centre before the next glance counts.
+ */
+export function createGlance({ amp = 0.08, hold = 350, calibrate = 15 } = {}) {
+  let neutral = null, samples = [], side = null, since = 0, armed = true;
+  return (dir, t) => {
+    if (neutral === null) {
+      samples.push(dir.x);
+      if (samples.length >= calibrate) neutral = samples.reduce((a, b) => a + b, 0) / samples.length;
+      return null;
+    }
+    const d = dir.x - neutral;
+    if (Math.abs(d) < amp / 2) { armed = true; side = null; return null; }
+    // The camera image is mirrored: turning right moves the nose left in the picture.
+    const now = d <= -amp ? 'right' : d >= amp ? 'left' : null;
+    if (!now || !armed) { if (!now) side = null; return null; }
+    if (now !== side) { side = now; since = t; return null; }
+    if (t - since < hold) return null;
+    armed = false; side = null;
+    return now;
   };
 }
 
@@ -14883,6 +15369,32 @@ export const firstVideoId = (html) => /"videoId":"([\w-]{11})"/.exec(html)?.[1] 
 
 export const everydayTools = [
   {
+    name: 'watch_add',
+    description: 'Watch a web page and tell the user (desktop notification and Telegram) when it changes: exam results, a notice, a price. '
+      + 'Needs the full address. The first check only remembers the page. Pages with clocks or ads may change every time; say so if it alerts too often.',
+    parameters: obj({ url: str('Full address, starting with https://'), what: str('Short name, e.g. "Exam results"'),
+      every_hours: { type: 'integer', description: 'How often to check, in hours (default 6)' } }, ['url', 'what']),
+    run: ({ url, what, every_hours }, { services }) => ({ watching: services.watch.add({ url, what, every_hours }), note: 'First check within 10 minutes.' }),
+  },
+  {
+    name: 'watch_list',
+    description: 'The web pages Maya is watching for changes, with when each was last checked.',
+    parameters: obj({}),
+    run: (_, { services }) => services.watch.list(),
+  },
+  {
+    name: 'watch_remove',
+    description: 'Stop watching a web page. which: its id, address or name.',
+    parameters: obj({ which: str('Id, address or name of the watch') }, ['which']),
+    run: ({ which }, { services }) => {
+      const q = String(which).toLowerCase();
+      const w = services.watch.list().find((x) => x.id === String(which) || x.url.toLowerCase() === q || x.what.toLowerCase().includes(q) || q.includes(x.what.toLowerCase()));
+      if (!w) return { error: `No watched page matches "${which}".`, watching: services.watch.list().map((x) => x.what) };
+      services.watch.remove(w.id);
+      return { stopped: w.what };
+    },
+  },
+  {
     name: 'places_accessible',
     description: 'Find wheelchair-accessible places near a town or area (hospital, pharmacy, accessible toilets, restaurant…) from OpenStreetMap. '
       + 'Accessible ones come first. Read out the top 3 with distance and access; say "unknown" places should be called first.',
@@ -15132,6 +15644,70 @@ export async function findAccessible({ kind, near, radiusKm = 3 }, { fetchFn = f
   return {
     summary: placesSummary(places, kind, where, radius), places,
     how: 'Answer from "summary" only. Never add a place that is not in "places", even one you know; never call a place (or a list) "wheelchair-accessible" unless its wheelchair is "yes", even if the user asked for accessible ones. Distances are straight-line; "unknown" access = call ahead.',
+  };
+}
+```
+
+### src/main/services/watch.js
+
+```javascript
+// Watch a website (as in OpenClaw's monitoring): Maya re-reads a page every few hours and tells the user (desktop
+// notification, and Telegram when paired) when its text changes: exam results, a notice, a price.
+// The first check only remembers the page; a page that cannot be opened is noted on that watch and the rest go on.
+
+const HOUR = 3600_000;
+const MAX = 20;
+const lines = (text) => String(text || '').split(/\n+/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+
+/** Lines on the page now that were not there before (exported for tests). */
+export const newLines = (before, after) => { const old = new Set(lines(before)); return lines(after).filter((l) => !old.has(l)); };
+
+/** read(url) → { title, text } (services/web.js readPage); notify(title, body) shows the alert. */
+export function createWatches({ store, read, notify, now = () => Date.now() }) {
+  const all = () => store.getSetting('webWatches', []);
+  const save = (list) => store.setSetting('webWatches', list);
+
+  async function check(w) {
+    try {
+      const { text } = await read(w.url, 20000);
+      if (w.text !== undefined && w.text !== text) {
+        const added = newLines(w.text, text).slice(0, 3).map((l) => l.slice(0, 160));
+        notify(`🔔 ${w.what} changed`, `${added.length ? `New: ${added.join(' / ')}` : 'Something on the page changed.'}\n${w.url}`);
+      }
+      return { ...w, text, checked: now(), error: null };
+    } catch (e) {
+      return { ...w, checked: now(), error: e.message };
+    }
+  }
+
+  return {
+    list: () => all().map(({ text, ...w }) => w), // the page text stays inside
+    add({ url, what, every_hours = 6 }) {
+      if (!/^https?:\/\/[^\s/]+\.[^\s]+/i.test(String(url || '').trim())) throw new Error('Give the full web address, starting with http:// or https://');
+      url = url.trim();
+      const list = all();
+      const same = list.find((w) => w.url === url);
+      if (same) return same;
+      if (list.length >= MAX) throw new Error(`Maya already watches ${MAX} pages; remove one first.`);
+      const w = { id: String(Math.max(0, ...list.map((x) => Number(x.id) || 0)) + 1), url, what: String(what || url).slice(0, 80),
+        every_hours: Math.min(168, Math.max(1, Math.round(Number(every_hours) || 6))), checked: null, error: null };
+      save([...list, w]);
+      return w;
+    },
+    remove(id) { const list = all(); save(list.filter((w) => w.id !== String(id))); return { removed: list.length - all().length }; },
+    /** Checks every watch that is due; call it every few minutes. */
+    async tick() {
+      const list = all();
+      const due = (w) => w.checked === null || now() - w.checked >= w.every_hours * HOUR;
+      if (!list.some(due)) return 0;
+      const next = [];
+      let checked = 0;
+      for (const w of list) next.push(due(w) ? (checked++, await check(w)) : w);
+      // A watch removed while checking stays removed.
+      const ids = new Set(all().map((w) => w.id));
+      save(next.filter((w) => ids.has(w.id)));
+      return checked;
+    },
   };
 }
 ```
@@ -16685,7 +17261,7 @@ const MODULES = [
       'src/renderer/shared/Face.jsx', 'src/renderer/shared/emotion.js', 'src/renderer/shared/useAsk.js', 'src/renderer/shared/Markdown.jsx', 'src/renderer/shared/ToolResult.jsx',
       'src/main/services/holdkeys.js', 'src/main/services/dictate.js',
       'src/renderer/shared/voicecommands.js', 'src/main/services/voicecontrol.js', 'src/renderer/overlay.html', 'src/renderer/overlay.jsx',
-      'src/renderer/app/Accessibility.jsx', 'src/main/services/scanning.js', 'src/main/services/keyboard.js', 'src/renderer/keyboard.html', 'src/renderer/keyboard.jsx',
+      'src/renderer/app/Accessibility.jsx', 'src/renderer/app/Speak.jsx', 'src/renderer/shared/speakboard.js', 'src/renderer/shared/noiseswitch.js', 'src/renderer/shared/voicenotes.js', 'src/main/services/scanning.js', 'src/main/services/keyboard.js', 'src/renderer/keyboard.html', 'src/renderer/keyboard.jsx',
       'src/main/services/sos.js', 'src/main/services/telegram.js', 'src/renderer/sos.html', 'src/renderer/sos.jsx', 'src/main/services/session.js', 'src/main/services/chatbots.js', 'src/renderer/shared/MicButton.jsx',
       'src/renderer/app.html', 'src/renderer/app.jsx', 'src/renderer/app.css', 'src/renderer/shared/base.css', 'src/renderer/app/Chat.jsx', 'src/renderer/app/Home.jsx']],
   ['2. Supervisor Orchestration Core', 'Understands the request, picks the model, chooses tools, plans multi-step goals (Agent and Builder modes) and runs workflows.',
@@ -16714,7 +17290,7 @@ const MODULES = [
   ['10. Helpers', 'Memory, web, smart search, screen snip, clipboard history, live captions, health breaks, extras.',
     ['src/main/tools/assistant.js', 'src/main/tools/extras.js', 'src/main/services/web.js', 'src/main/services/search.js', 'src/main/services/clipboard.js',
       'src/main/services/health.js', 'src/renderer/app/Search.jsx', 'src/renderer/snip.html', 'src/renderer/snip.jsx', 'src/renderer/captions.html', 'src/renderer/captions.jsx',
-      'src/main/tools/everyday.js', 'src/main/services/places.js', 'src/main/services/timers.js', 'src/renderer/prompter.html', 'src/renderer/prompter.jsx', 'src/renderer/shared/prompter.js',
+      'src/main/tools/everyday.js', 'src/main/services/places.js', 'src/main/services/watch.js', 'src/main/services/timers.js', 'src/renderer/prompter.html', 'src/renderer/prompter.jsx', 'src/renderer/shared/prompter.js',
       'src/renderer/camera.html', 'src/renderer/camera.js', 'src/main/services/interpreter.js', 'src/main/tools/people.js']],
   ['11. Data, security and settings', 'SQLite storage, encrypted secrets, PIN lock, backup, theme.',
     ['src/main/paths.js', 'src/main/store.js', 'src/main/secrets.js', 'src/main/security.js', 'src/main/backup.js', 'src/main/theme.js',
@@ -17830,7 +18406,7 @@ test('requests reach the camera and interpreter tools', () => {
 ```javascript
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { headDirection, createPointer, createGestures, createDwell } from '../src/renderer/shared/headpose.js';
+import { headDirection, createPointer, createGestures, createDwell, createGlance, createFaceActions, FACE_GESTURES } from '../src/renderer/shared/headpose.js';
 
 /** A fake face: eyes at y 0.4, forehead 0.2, chin 0.8, nose shifted by (dx, dy). */
 const face = (dx = 0, dy = 0) => {
@@ -17839,6 +18415,44 @@ const face = (dx = 0, dy = 0) => {
   lm[1] = { x: 0.5 + dx, y: 0.5 + dy };
   return lm;
 };
+
+test('glance: a held turn left or right fires once, small or quick moves do not, and it re-arms at the centre', () => {
+  const g = createGlance({ calibrate: 3, hold: 300 });
+  let t = 0;
+  const at = (dx, ms = 50) => { t += ms; return g(headDirection(face(dx)), t); };
+  for (let i = 0; i < 3; i++) assert.equal(at(0), null, 'calibrating');
+  assert.equal(at(-0.003), null, 'a small move is not a glance');
+  assert.equal(at(-0.012), null, 'just started turning');
+  assert.equal(at(0), null, 'a quick twitch back');
+  assert.equal(at(-0.012), null);
+  assert.equal(at(-0.012, 200), null);
+  assert.equal(at(-0.012, 200), 'right', 'held for 300 ms: the user turned right (mirrored camera)');
+  assert.equal(at(-0.012, 400), null, 'fires once, not again while still turned');
+  assert.equal(at(0.012, 400), null, 'must come back to the centre first');
+  assert.equal(at(0), null);
+  assert.equal(at(0.012), null);
+  assert.equal(at(0.012, 400), 'left');
+});
+
+test('face gestures: only the ones the user chose act, once per hold, with a pause between', () => {
+  assert.deepEqual(FACE_GESTURES.map(([k]) => k), ['browUp', 'mouthLeft', 'mouthRight', 'pucker']);
+  const act = createFaceActions({ map: { browUp: 'scrollUp', pucker: 'enter', mouthLeft: 'none' }, hold: 200, cooldown: 500 });
+  const brows = { browInnerUp: 0.8 }, pucker = { mouthPucker: 0.8, jawOpen: 0.05 }, left = { mouthLeft: 0.9 };
+  assert.equal(act(brows, 0), null, 'just started');
+  assert.equal(act(brows, 250), 'scrollUp', 'held long enough');
+  assert.equal(act(brows, 600), null, 'once per raise, not repeating');
+  assert.equal(act({}, 650), null);
+  assert.equal(act(left, 700), null);
+  assert.equal(act(left, 1000), null, 'mouth left is set to "none"');
+  assert.equal(act(pucker, 1100), null);
+  assert.equal(act(pucker, 1400), 'enter');
+  assert.equal(act({}, 1450), null);
+  assert.equal(act(brows, 1500), null);
+  assert.equal(act(brows, 1750), null, 'held, but only 350 ms since the last action (Enter at 1400)');
+  assert.equal(act(brows, 1950), 'scrollUp', '550 ms after the last action');
+  assert.equal(act({ mouthPucker: 0.8, jawOpen: 0.5 }, 3000), null, 'an open mouth (a click) is not a pucker');
+  assert.equal(createFaceActions({ map: {} })({ browInnerUp: 1 }, 5000), null, 'nothing chosen: nothing happens');
+});
 
 test('head direction is measured from between the eyes', () => {
   const d = headDirection(face(0.01, 0));
@@ -18814,12 +19428,60 @@ test('"open my WhatsApp chat and download the video to desktop" picks the skill 
 });
 ```
 
+### test/noiseswitch.test.js
+
+```javascript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createNoiseSwitch, SENSITIVITY } from '../src/renderer/shared/noiseswitch.js';
+
+/** Feeds levels (one every 20 ms) and returns the times it fired. */
+function run(detect, levels, start = 0) {
+  const fired = [];
+  levels.forEach((l, i) => { const t = start + i * 20; if (detect(l, t)) fired.push(t); });
+  return fired;
+}
+const quiet = (ms) => Array(ms / 20).fill(0.01);
+const loud = (ms, level = 0.4) => Array(ms / 20).fill(level);
+
+test('a short pop after a quiet moment presses the switch once', () => {
+  const fired = run(createNoiseSwitch(), [...quiet(400), ...loud(60), ...quiet(200)]);
+  assert.equal(fired.length, 1);
+});
+
+test('speech, a long noise or a pop in the middle of talking do not press it', () => {
+  assert.deepEqual(run(createNoiseSwitch(), [...quiet(400), ...loud(600, 0.3), ...quiet(200)]), [], 'talking (long)');
+  assert.deepEqual(run(createNoiseSwitch(), [...quiet(400), ...loud(400, 0.1), ...loud(60), ...quiet(200)]), [], 'a burst right after other sound');
+  assert.deepEqual(run(createNoiseSwitch(), [...quiet(400), ...loud(60, 0.08), ...quiet(200)]), [], 'too soft');
+});
+
+test('two pops close together count once; after a pause the next counts', () => {
+  const pops = [...quiet(400), ...loud(60), ...quiet(300), ...loud(60), ...quiet(300), ...quiet(400), ...loud(60), ...quiet(200)];
+  assert.equal(run(createNoiseSwitch({ gapMs: 600 }), pops).length, 2);
+});
+
+test('sensitivity changes how loud a pop must be', () => {
+  const soft = [...quiet(400), ...loud(60, 0.15), ...quiet(200)];
+  assert.equal(run(createNoiseSwitch(SENSITIVITY.high), soft).length, 1);
+  assert.equal(run(createNoiseSwitch(SENSITIVITY.normal), soft).length, 0);
+  assert.ok(SENSITIVITY.low.threshold > SENSITIVITY.normal.threshold);
+});
+```
+
 ### test/pc.test.js
 
 ```javascript
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchApp, describeWindow, createPc } from '../src/main/services/pc.js';
+import { matchApp, describeWindow, createPc, faceAction } from '../src/main/services/pc.js';
+
+test('a face gesture action becomes the right click, scroll or key', async () => {
+  const done = [];
+  const pc = { clickHere: async (b) => done.push(`click ${b}`), scroll: async (n) => done.push(`scroll ${n}`), keys: async (k) => done.push(`keys ${k}`) };
+  for (const a of ['click', 'right', 'double', 'scrollUp', 'scrollDown', 'enter', 'escape', 'tab']) await faceAction(pc, a);
+  assert.deepEqual(done, ['click left', 'click right', 'click left', 'click left', 'scroll 360', 'scroll -360', 'keys {ENTER}', 'keys {ESC}', 'keys {TAB}']);
+  await assert.rejects(faceAction(pc, 'format c:'), /Unknown face action/);
+});
 
 test('finds the right Start Menu app from a spoken name', () => {
   const names = ['Visual Studio Code', 'Google Chrome', 'Uninstall Google Chrome', 'Microsoft Edge', 'Word', 'Spotify', 'Python 3.14 (64-bit)'];
@@ -20178,6 +20840,38 @@ test('check-in only after a long silence inside the chosen hours', () => {
 });
 ```
 
+### test/speakboard.test.js
+
+```javascript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { halves, narrow, DEFAULT_PHRASES } from '../src/renderer/shared/speakboard.js';
+
+test('the phrases split into a left and a right half (left gets the extra one)', () => {
+  assert.deepEqual(halves(['a', 'b', 'c', 'd', 'e']), [['a', 'b', 'c'], ['d', 'e']]);
+  assert.deepEqual(halves(['a']), [['a'], []]);
+  assert.deepEqual(halves([]), [[], []]);
+});
+
+test('glancing keeps one half until a single phrase is left', () => {
+  let list = ['water', 'pain', 'toilet', 'call amma', 'cold', 'thank you', 'yes'];
+  list = narrow(list, 'right'); // 7 → left 4, right 3
+  assert.deepEqual(list, ['cold', 'thank you', 'yes']);
+  list = narrow(list, 'left');
+  assert.deepEqual(list, ['cold', 'thank you']);
+  list = narrow(list, 'right');
+  assert.deepEqual(list, ['thank you']);
+  assert.deepEqual(narrow(['only'], 'right'), ['only'], 'one phrase stays (nothing on the right)');
+});
+
+test('the starter phrases cover basic needs, in English and Tamil', () => {
+  assert.ok(DEFAULT_PHRASES.length >= 8);
+  assert.ok(DEFAULT_PHRASES.some((p) => /water/i.test(p)));
+  assert.ok(DEFAULT_PHRASES.some((p) => /pain/i.test(p)));
+  assert.ok(DEFAULT_PHRASES.some((p) => /[஀-௿]/.test(p)), 'at least one Tamil phrase');
+});
+```
+
 ### test/student.test.js
 
 ```javascript
@@ -20284,27 +20978,36 @@ const TOKEN = '123456:FAKE-token_for-tests';
 /** A fake Telegram Bot API: queued updates in, sent messages out. */
 function fakeTelegram({ valid = true } = {}) {
   const t = { queue: [], sent: [], offsets: [], valid, nextId: 1 };
+  t.voices = [];
   t.fetch = async (url, opts = {}) => {
+    const file = /\/file\/bot([^/]+)\/(.+)$/.exec(String(url));
+    if (file) return { ok: file[1] === TOKEN, status: file[1] === TOKEN ? 200 : 401, arrayBuffer: async () => new TextEncoder().encode(`audio of ${file[2]}`).buffer };
     const m = /\/bot([^/]+)\/(\w+)$/.exec(String(url));
     assert.ok(m, String(url));
     if (!t.valid || m[1] !== TOKEN) return { ok: false, status: 401, json: async () => ({ ok: false, description: 'Unauthorized' }) };
+    if (opts.body instanceof FormData) { // file uploads (sendVoice)
+      t.voices.push({ method: m[2], chat_id: Number(opts.body.get('chat_id')), size: opts.body.get('voice')?.size, type: opts.body.get('voice')?.type });
+      return { ok: true, json: async () => ({ ok: true, result: {} }) };
+    }
     const body = opts.body ? JSON.parse(opts.body) : {};
+    if (m[2] === 'getFile') return { ok: true, json: async () => ({ ok: true, result: { file_path: `voice/${body.file_id}.oga` } }) };
     if (m[2] === 'getMe') return { ok: true, json: async () => ({ ok: true, result: { username: 'maya_test_bot' } }) };
     if (m[2] === 'getUpdates') { t.offsets.push(body.offset); const result = t.queue.filter((u) => u.update_id >= (body.offset || 0)); t.queue = []; return { ok: true, json: async () => ({ ok: true, result }) }; }
     if (m[2] === 'sendMessage') { t.sent.push(body); return { ok: true, json: async () => ({ ok: true, result: {} }) }; }
     throw new Error(`unexpected ${m[2]}`);
   };
   t.say = (chatId, text, first_name = 'Rahul') => t.queue.push({ update_id: t.nextId++, message: { chat: { id: chatId }, from: { first_name }, text } });
+  t.voice = (chatId, fileId, first_name = 'Rahul') => t.queue.push({ update_id: t.nextId++, message: { chat: { id: chatId }, from: { first_name }, voice: { file_id: fileId, duration: 3 } } });
   return t;
 }
 const fakeSecrets = () => { const m = new Map(); return { get: (k) => m.get(k) ?? null, set: (k, v) => (v ? m.set(k, v) : m.delete(k)), map: m }; };
 
-async function setup({ answer = async (text) => `You said: ${text}` } = {}) {
+async function setup({ answer = async (text) => `You said: ${text}`, transcribe, speak } = {}) {
   const store = openStore(':memory:');
   const secrets = fakeSecrets();
   const tg = fakeTelegram();
   const asked = [];
-  const bot = createTelegram({ store, secrets, fetchFn: tg.fetch, answer: async (text, ctx) => { asked.push(text); return answer(text, ctx); } });
+  const bot = createTelegram({ store, secrets, fetchFn: tg.fetch, transcribe, speak, answer: async (text, ctx) => { asked.push(text); return answer(text, ctx); } });
   await bot.setToken(TOKEN);
   return { store, secrets, tg, asked, bot };
 }
@@ -20394,6 +21097,63 @@ test('caregivers join with a one-time code, get alerts only, and can be removed'
   bot.removeCaregiver(7);
   assert.deepEqual(bot.status().caregivers, []);
   assert.equal(await bot.alertCaregivers('nobody'), 0);
+});
+
+test('voice notes are transcribed and answered, by voice too after a voice note', async () => {
+  const heard = [];
+  const transcribe = async (bytes) => { heard.push(new TextDecoder().decode(bytes)); return heard.length === 2 ? '' : 'what is on my calendar today'; };
+  const speak = async (text) => ({ bytes: new TextEncoder().encode(`m4a of ${text}`), mime: 'audio/mp4' });
+  const { tg, asked, bot } = await setup({ transcribe, speak });
+  tg.say(5, bot.status().code);
+  await bot.pollOnce();
+  tg.voice(5, 'v1');
+  await bot.pollOnce();
+  assert.deepEqual(heard, ['audio of voice/v1.oga'], 'the voice file was downloaded from Telegram');
+  assert.deepEqual(asked, ['what is on my calendar today']);
+  assert.ok(tg.sent.some((m) => m.text === '🎙️ “what is on my calendar today”'), 'Maya says what she heard');
+  assert.equal(tg.sent.at(-1).text, 'You said: what is on my calendar today');
+  assert.deepEqual(tg.voices, [{ method: 'sendVoice', chat_id: 5, size: 'm4a of You said: what is on my calendar today'.length, type: 'audio/mp4' }]);
+  tg.voice(5, 'v2'); // silence
+  await bot.pollOnce();
+  assert.match(tg.sent.at(-1).text, /could not hear any words/i);
+  assert.equal(asked.length, 1);
+  tg.say(5, 'hello'); // typed: answered in text only (the default)
+  await bot.pollOnce();
+  assert.equal(tg.voices.length, 1);
+  bot.setVoiceReplies('always');
+  tg.say(5, 'hello again');
+  await bot.pollOnce();
+  assert.equal(tg.voices.length, 2, 'always: typed messages get a voice answer too');
+  bot.setVoiceReplies('never');
+  tg.voice(5, 'v3');
+  await bot.pollOnce();
+  assert.equal(tg.voices.length, 2, 'never: no voice answers');
+  assert.equal(bot.status().voiceReplies, 'never');
+  assert.throws(() => bot.setVoiceReplies('loud'), /voice/i);
+});
+
+test('voice notes from strangers are ignored and caregivers never reach the AI by voice', async () => {
+  const heard = [];
+  const { tg, asked, bot } = await setup({ transcribe: async () => { heard.push(1); return 'hi'; } });
+  tg.say(5, bot.status().code);
+  await bot.pollOnce();
+  tg.say(7, bot.status().caregiverCode, 'Priya');
+  await bot.pollOnce();
+  const before = tg.sent.length;
+  tg.voice(9, 'x', 'Stranger');
+  await bot.pollOnce();
+  assert.equal(tg.sent.length, before);
+  tg.voice(7, 'y', 'Priya');
+  await bot.pollOnce();
+  assert.match(tg.sent.at(-1).text, /only sends alerts/);
+  assert.equal(heard.length, 0, 'nothing was transcribed');
+  assert.equal(asked.length, 0);
+  const noEars = await setup(); // a Maya without speech recognition says so instead of failing silently
+  noEars.tg.say(5, noEars.bot.status().code);
+  await noEars.bot.pollOnce();
+  noEars.tg.voice(5, 'z');
+  await noEars.bot.pollOnce();
+  assert.match(noEars.tg.sent.at(-1).text, /type your message/i);
 });
 
 test('each message is handled once, long answers are split, and a revoked token stops polling', async () => {
@@ -20530,6 +21290,92 @@ test('a wake phrase after a long quiet wait is a short clip (the quiet before it
   // The wake loop drops clips over 4 s: before the fix this was ~4.6 s (all the waiting + speech + silence).
   assert.ok(seconds < 2.5, `clip is ${seconds.toFixed(1)} s`);
   assert.ok(seconds > 0.7, 'the speech itself is kept');
+});
+```
+
+### test/watch.test.js
+
+```javascript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+process.env.ATHER_DATA = mkdtempSync(join(tmpdir(), 'maya-watch-'));
+const { openStore } = await import('../src/main/store.js');
+const { createWatches, newLines } = await import('../src/main/services/watch.js');
+const { allTools } = await import('../src/main/tools/index.js');
+const { selectTools } = await import('../src/main/tools/select.js');
+
+const HOUR = 3600_000;
+function setup(pages) {
+  const store = openStore(':memory:');
+  const alerts = [];
+  let clock = 0;
+  const read = async (url) => { const p = pages[url]; if (p instanceof Error) throw p; return { title: 'Page', url, text: p() }; };
+  const w = createWatches({ store, read, notify: (title, body) => alerts.push({ title, body }), now: () => clock });
+  return { store, alerts, w, tick: async (hours) => { clock += hours * HOUR; return w.tick(); } };
+}
+
+test('the first check only remembers the page; a change later is reported with the new lines', async () => {
+  let text = 'Results\nSemester 5 results: not yet published\nContact office';
+  const { w, alerts, tick } = setup({ 'https://coe.example.edu/results': () => text });
+  const added = w.add({ url: 'https://coe.example.edu/results', what: 'Exam results', every_hours: 6 });
+  assert.equal(added.what, 'Exam results');
+  await tick(0);
+  assert.equal(alerts.length, 0, 'first look: nothing to compare with');
+  await tick(6);
+  assert.equal(alerts.length, 0, 'unchanged');
+  text = 'Results\nSemester 5 results: published, download PDF\nContact office';
+  await tick(3);
+  assert.equal(alerts.length, 0, 'not due yet (every 6 hours)');
+  await tick(3);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0].title, /Exam results/);
+  assert.match(alerts[0].body, /Semester 5 results: published, download PDF/);
+  assert.match(alerts[0].body, /https:\/\/coe\.example\.edu\/results/);
+  await tick(6);
+  assert.equal(alerts.length, 1, 'the same change is reported once');
+});
+
+test('a page that cannot be opened is noted without stopping the others', async () => {
+  let a = 'price 1000';
+  const { w, alerts, tick } = setup({ 'https://shop.example.com/a': () => a, 'https://down.example.com/': new Error('Could not open the page (503)') });
+  w.add({ url: 'https://down.example.com/', what: 'Down site' });
+  w.add({ url: 'https://shop.example.com/a', what: 'Wheelchair price' });
+  await tick(0);
+  a = 'price 899';
+  await tick(6);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0].body, /price 899/);
+  assert.match(w.list().find((x) => x.what === 'Down site').error, /503/);
+});
+
+test('adding checks the address, the limits and duplicates; watches can be removed', () => {
+  const { w } = setup({});
+  assert.throws(() => w.add({ url: 'file:///C:/secret.txt', what: 'x' }), /http/);
+  assert.throws(() => w.add({ url: 'not a url', what: 'x' }), /http/);
+  const one = w.add({ url: 'https://a.example.com/', what: 'A', every_hours: 0.01 });
+  assert.equal(one.every_hours, 1, 'at most once an hour');
+  assert.equal(w.add({ url: 'https://a.example.com/', what: 'A again' }).id, one.id, 'same page: same watch');
+  for (let i = 0; i < 19; i++) w.add({ url: `https://s${i}.example.com/`, what: `S${i}` });
+  assert.throws(() => w.add({ url: 'https://one-too-many.example.com/', what: 'x' }), /20/);
+  w.remove(one.id);
+  assert.equal(w.list().length, 19);
+});
+
+test('new lines are the ones that were not on the page before', () => {
+  assert.deepEqual(newLines('a\nb\nc', 'a\nb2\nc\nd'), ['b2', 'd']);
+  assert.deepEqual(newLines('same', 'same'), []);
+});
+
+test('voice tools exist and "tell me when this page changes" reaches them', async () => {
+  for (const n of ['watch_add', 'watch_list', 'watch_remove']) assert.ok(allTools.find((t) => t.name === n), n);
+  const names = (t) => selectTools(allTools, t).map((x) => x.name);
+  for (const t of ['tell me when https://coe.example.edu/results changes', 'watch this website for the exam notice', 'keep an eye on the price on this page', 'stop watching the results page'])
+    assert.ok(names(t).includes('watch_add') || names(t).includes('watch_remove'), t);
+  assert.ok(!names('what is an API?').includes('watch_add'));
 });
 ```
 
