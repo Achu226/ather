@@ -52,6 +52,13 @@ test('switching endpoints: a custom OpenAI-compatible provider really answers, u
     assert.ok(usage[0].prompt_tokens > 0);
   });
 
+test('private tools (screen, files, mail, contacts, health) are never offered to cloud models', async () => {
+  const { CLOUD_PRIVATE } = await import('../src/main/brain.js');
+  for (const name of ['screen_look', 'fs_read', 'mail_read', 'contacts_query', 'diary_add', 'medical_id', 'camera_look'])
+    assert.ok(CLOUD_PRIVATE.test(name), name);
+  assert.ok(!CLOUD_PRIVATE.test('web_search'));
+});
+
 test('cloud models do not get screen, files or documents unless allowed', { skip: !running && 'Ollama not running', timeout: 300_000 }, async () => {
   const store = openStore(':memory:');
   const providers = createProviders({ store, secrets: fakeSecrets() });

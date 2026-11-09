@@ -1,6 +1,7 @@
 // People and feelings: a contact book for calls and WhatsApp by voice, and a spoken diary with moods.
 import { now } from '../store.js';
 import { matchApp } from '../services/pc.js';
+import { SOS_DEFAULTS, MEDICAL_FIELDS, medicalLines } from '../services/sos.js';
 
 const str = (description) => ({ type: 'string', description });
 const obj = (properties, required = []) => ({ type: 'object', properties, required });
@@ -32,6 +33,20 @@ export function findContact(store, who) {
 const notFound = (store, who) => ({ error: `No contact called "${who}". Saved: ${store.all('SELECT name FROM contacts WHERE deleted = 0').map((c) => c.name).join(', ') || 'none yet'}. Add one with contacts_add.` });
 
 export const peopleTools = [
+  {
+    name: 'medical_id',
+    description: 'The user\'s Medical ID (blood group, allergies, conditions, medicines, doctor): shown on the SOS help sign and emailed to caregivers in an emergency. '
+      + 'Call with the fields the user just told you to save them; call with nothing to read it out.',
+    parameters: obj(Object.fromEntries(MEDICAL_FIELDS.map(([k, label]) => [k, str(`${label} as the user said it${k === 'doctor' ? ' (name and phone)' : ''}`)]))),
+    run: (args, { store }) => {
+      const sos = { ...SOS_DEFAULTS, ...store.getSetting('sos', SOS_DEFAULTS) };
+      const given = Object.fromEntries(MEDICAL_FIELDS.map(([k]) => [k, args[k]]).filter(([, v]) => String(v ?? '').trim()));
+      if (Object.keys(given).length) store.setSetting('sos', { ...sos, medical: { ...sos.medical, ...given } });
+      const medical = medicalLines({ ...sos.medical, ...given });
+      return { medical, ...(Object.keys(given).length && { saved: Object.keys(given) }),
+        note: medical.length ? 'Shown on the SOS help sign and sent to caregivers in an emergency. Read it back to the user.' : 'Nothing saved yet: ask for blood group, allergies, conditions, medicines and doctor.' };
+    },
+  },
   {
     name: 'contacts_add',
     description: 'Save a contact (name, phone, optional email and relation like "amma", "brother", "doctor") so the user can call or WhatsApp them by voice. Only saves: never call or message them unless the user asked.',

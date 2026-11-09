@@ -14,7 +14,7 @@ export const BASE_MODEL = 'qwen3.5:4b';
 export const BRAIN_MODEL = 'ather-brain'; // BASE_MODEL with a bigger context, see ensureBrainModel
 const MAX_TOOL_ROUNDS = 6;
 // Tools that read the user's screen, files or mail are not offered to cloud models without permission.
-const CLOUD_PRIVATE = /^(screen_look|files_|open_file|python_|images_(blur|remove|upscale)|mail_|fs_|computer_|clipboard_|camera_|contacts_|call_contact|whatsapp_|diary_)/;
+export const CLOUD_PRIVATE = /^(screen_look|files_|open_file|python_|images_(blur|remove|upscale)|mail_|fs_|computer_|clipboard_|camera_|contacts_|call_contact|whatsapp_|diary_|medical_)/;
 const AGENT_ROUNDS = 25;
 const BUILDER_ROUNDS = 40;
 const COMPUTER_ROUNDS = 30;

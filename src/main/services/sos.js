@@ -5,10 +5,15 @@ import nodemailer from 'nodemailer';
 
 // The mail account connected in Inbox (IMAP) also sends: the matching SMTP servers.
 const SMTP = { 'imap.gmail.com': 'smtp.gmail.com', 'outlook.office365.com': 'smtp.office365.com', 'imap.mail.yahoo.com': 'smtp.mail.yahoo.com' };
-export const SOS_DEFAULTS = { contacts: [], phones: [], name: '', note: '', shareLocation: false, daily: { on: false, time: '20:00' }, checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' } };
+export const SOS_DEFAULTS = { contacts: [], phones: [], name: '', note: '', shareLocation: false, daily: { on: false, time: '20:00' }, checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' }, medical: {} };
+
+// Medical ID: what a caregiver or paramedic needs first. Shown on the help sign and sent with the SOS email.
+export const MEDICAL_FIELDS = [['blood', 'Blood group'], ['allergies', 'Allergies'], ['conditions', 'Conditions'], ['medicines', 'Medicines'], ['doctor', 'Doctor']];
+/** "Blood group: O+" lines for the fields that are filled in (exported for tests). */
+export const medicalLines = (medical) => MEDICAL_FIELDS.filter(([k]) => String(medical?.[k] ?? '').trim()).map(([k, label]) => `${label}: ${String(medical[k]).trim()}`);
 
 /** The email caregivers get (exported for tests). */
-export function sosEmail({ name, note, reason, at, location }) {
+export function sosEmail({ name, note, reason, at, location, medical }) {
   const who = name || 'Your contact';
   const when = at.toLocaleString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
   return {
@@ -16,7 +21,8 @@ export function sosEmail({ name, note, reason, at, location }) {
     text: `${who} asked for help through Maya (${reason}) on ${when}.\n\n`
       + 'Please call or go to them now. An alarm is sounding on their computer and a "I need help" sign is on the screen.'
       + (location ? `\n\nApproximate location (from the internet connection, may be a few km off): ${location}` : '')
-      + (note ? `\n\nNote from ${who}: ${note}` : '') + '\n\nSent automatically by Maya.',
+      + (note ? `\n\nNote from ${who}: ${note}` : '')
+      + (medicalLines(medical).length ? `\n\nMedical ID:\n${medicalLines(medical).map((l) => `- ${l}`).join('\n')}` : '') + '\n\nSent automatically by Maya.',
   };
 }
 
@@ -69,17 +75,17 @@ export function createSos({ store, secrets, onState = () => {}, transport, call 
   let pending = null;
   const settings = () => ({ ...SOS_DEFAULTS, ...store.getSetting('sos', SOS_DEFAULTS) });
   // The SOS screen shows these even while Maya is PIN-locked, so they travel with each state.
-  const who = () => ({ name: settings().name, note: settings().note });
+  const who = () => ({ name: settings().name, note: settings().note, medical: medicalLines(settings().medical) });
   const log = (entry) => store.setSetting('sosLog', [{ at: new Date().toISOString(), ...entry }, ...store.getSetting('sosLog', [])].slice(0, 30));
 
   async function email(reason, { test = false, message = null } = {}) {
-    const { contacts, name, note, shareLocation } = settings();
+    const { contacts, name, note, shareLocation, medical } = settings();
     if (!contacts.length) return { sent: 0, error: 'No caregiver email is saved (Accessibility page).' };
     const cfg = store.getSetting('mail');
     const pass = secrets.get('mail-password');
     if (!transport && (!cfg?.user || !pass)) return { sent: 0, error: 'Email is not connected (Inbox page), so no email could be sent.' };
     const mailer = transport || nodemailer.createTransport({ host: SMTP[cfg.host] || cfg.host.replace(/^imap\./, 'smtp.'), port: 465, secure: true, auth: { user: cfg.user, pass } });
-    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null });
+    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null, medical });
     await mailer.sendMail({ from: cfg?.user || 'ather@localhost', to: contacts.join(', '), subject: test ? `Test: ${msg.subject}` : msg.subject,
       text: test ? `This is only a test of Maya's emergency button. Nothing is wrong.\n\n---\n${msg.text}` : msg.text });
     return { sent: contacts.length };

@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import { useSetting } from './Settings.jsx';
 
 const A11Y_DEFAULTS = { dwell: 0, switchKey: 'F9', scanMs: 1200, keyboardLayout: 'en', keyboardSize: 1 };
-const SOS_DEFAULTS = { contacts: [], phones: [], shareLocation: false, daily: { on: false, time: '20:00' }, name: '', note: '', checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' } };
+const SOS_DEFAULTS = { contacts: [], phones: [], shareLocation: false, daily: { on: false, time: '20:00' }, name: '', note: '', checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' }, medical: {} };
+// Same fields as MEDICAL_FIELDS in services/sos.js (shown on the help sign, sent with the SOS email).
+const MEDICAL = [['blood', 'Blood group', 'e.g. O+'], ['allergies', 'Allergies', 'e.g. Penicillin, peanuts, none'], ['conditions', 'Conditions', 'e.g. Diabetes, epilepsy, spinal injury'],
+  ['medicines', 'Medicines', 'e.g. Insulin 10 units at 8 am'], ['doctor', 'Doctor', 'Name and phone']];
 const errText = (e) => e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 const COMMANDS = [
@@ -154,6 +157,16 @@ export default function Accessibility() {
             <input id="sos-p" className="input" type="tel" value={phones} onChange={(e) => setPhones(e.target.value)} onBlur={savePhones} placeholder="+91 98765 43210" /></div>
           <div className="field"><label htmlFor="sos-note">Note for them (medicine, door key, doctor's number…)</label>
             <input id="sos-note" className="input" value={s.note} onChange={(e) => setS({ note: e.target.value })} /></div>
+          <fieldset className="medical-id">
+            <legend>🩺 Medical ID</legend>
+            <p className="muted small-print">Shown on the help sign and sent to your caregivers in an emergency. You can also say “my blood group is O positive”.</p>
+            <div className="medical-grid">
+              {MEDICAL.map(([k, label, hint]) => (
+                <div className="field" key={k}><label htmlFor={`med-${k}`}>{label}</label>
+                  <input id={`med-${k}`} className="input" value={s.medical?.[k] || ''} placeholder={hint} onChange={(e) => setS({ medical: { ...s.medical, [k]: e.target.value } })} /></div>
+              ))}
+            </div>
+          </fieldset>
           <label className="row field"><input type="checkbox" className="check" checked={!!s.shareLocation} onChange={(e) => setS({ shareLocation: e.target.checked })} />
             Add my approximate location to the emergency email (from the internet connection; only when help is asked for)</label>
           <label className="row field"><input type="checkbox" className="check" checked={!!s.daily?.on} onChange={(e) => setS({ daily: { ...SOS_DEFAULTS.daily, ...s.daily, on: e.target.checked } })} />

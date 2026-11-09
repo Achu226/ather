@@ -57,6 +57,7 @@ const GROUPS = [
   [/\b(head mouse|hands?-free|without (a |the )?mouse|can'?t use (a |the |my )?mouse|move the (cursor|mouse) with my head|head (control|tracking))/i, /^head_mouse$/],
   [/\b(captions?|subtitles?|translate (this|the) (video|audio|call|class)|what (are|is) they saying)/i, /^captions_/],
   [/\b(wheel ?chair|accessible|ramps?|step-?free|near me|nearby|nearest|closest|around here)\b/i, /^places_accessible$/],
+  [/\b(medical (id|info|details)|blood (group|type)|allerg|my (health )?conditions?|my doctor)/i, /^medical_id$/],
   [/\b((in|on|into) (whatsapp|notepad|word|excel|telegram|teams|outlook|paint|settings|chrome|edge|google|youtube|gmail|the app|the browser|this (app|window|page))|type (?!of\b)\S|write .+ (in|into|on) |click\b|select\b|open .+ (and|then) (type|search|write|click|send|play|calculate|work out|draw|drag|rename|edit)|(use|using|with) (the |my )?(mouse|keyboard)|fill (in|out|this)|(message|text|whatsapp) \w+|send (a|the|my)? ?message|(take )?control (of )?(my|the) (pc|computer|laptop)|use my (pc|computer|laptop)|do it for me|go to|scroll (up|down)|press (enter|the|ctrl)|(search|look up) .* (in|on) (chrome|google|youtube|edge))/i, /^computer_/],
 ];
 
