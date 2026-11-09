@@ -1,4 +1,4 @@
-# Maya 1.8.3 — full source listing
+# Maya 1.8.4 — full source listing
 
 Same order as CODE_GUIDE.md.
 
@@ -167,7 +167,9 @@ app.whenReady().then(async () => {
   services.sos = createSos({ store, secrets, onState: (s) => {
     windows.sos(s.state === 'cancelled' || s.state === 'off' ? null : s);
     windows.toNotch('sos', s);
-  }, call: (number) => phoneCall({ pc: services.pc, open: (url) => shell.openExternal(url), number }) });
+  }, call: (number) => phoneCall({ pc: services.pc, open: (url) => shell.openExternal(url), number }),
+  // Caregivers paired on Telegram get the same alerts (services.telegram is made just below, so it is looked up when sent).
+  alert: (text) => services.telegram?.alertCaregivers(text) ?? Promise.resolve(0) });
   // Maya from the phone (Telegram): its own conversation, so the chat shows up on the PC too.
   const phoneConversation = () => {
     const id = store.getSetting('phoneConversation');
@@ -759,6 +761,7 @@ contextBridge.exposeInMainWorld('ather', {
   telegramStatus: invoke('telegram:status'),
   telegramSetToken: invoke('telegram:setToken'),
   telegramForget: invoke('telegram:forget'),
+  telegramRemoveCaregiver: invoke('telegram:removeCaregiver'),
   onSos: on('sos'),
   onSession: on('session'),
   sessionExtend: invoke('session:extend'),
@@ -1084,6 +1087,7 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('telegram:status', () => services.telegram.status());
   handle('telegram:setToken', async (token) => { const s = await services.telegram.setToken(token); services.telegram.start(); return s; });
   handle('telegram:forget', () => { services.telegram.forget(); return services.telegram.status(); });
+  handle('telegram:removeCaregiver', (id) => { services.telegram.removeCaregiver(id); return services.telegram.status(); });
   ipcMain.on('voice:heard', () => { services.lastVoice = Date.now(); });
   handle('headmouse:set', (on) => services.headMouse.set(on));
   handle('headmouse:model', async () => readFileSync(await downloadFile('facemesh')));
@@ -4005,7 +4009,7 @@ export async function phoneCall({ pc, open, number, tries = 12 }) {
  * onState({ state: 'countdown' | 'alarm' | 'cancelled' | 'off', seconds, reason, sent, error }) drives the SOS window and the face.
  * transport: a nodemailer transport (tests pass a JSON one).
  */
-export function createSos({ store, secrets, onState = () => {}, transport, call = null, countdownMs = 10_000, locate = approxLocation }) {
+export function createSos({ store, secrets, onState = () => {}, transport, call = null, countdownMs = 10_000, locate = approxLocation, alert = async () => 0 }) {
   let pending = null;
   const settings = () => ({ ...SOS_DEFAULTS, ...store.getSetting('sos', SOS_DEFAULTS) });
   // The SOS screen shows these even while Maya is PIN-locked, so they travel with each state.
@@ -4014,15 +4018,18 @@ export function createSos({ store, secrets, onState = () => {}, transport, call 
 
   async function email(reason, { test = false, message = null } = {}) {
     const { contacts, name, note, shareLocation, medical } = settings();
-    if (!contacts.length) return { sent: 0, error: 'No caregiver email is saved (Accessibility page).' };
+    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null, medical });
+    const subject = test ? `Test: ${msg.subject}` : msg.subject;
+    const text = test ? `This is only a test of Maya's emergency button. Nothing is wrong.\n\n---\n${msg.text}` : msg.text;
+    // Telegram caregivers first and independently: it works even when no email account is connected.
+    const telegram = await alert(`${subject}\n\n${text}`).catch(() => 0);
+    if (!contacts.length) return { sent: 0, telegram, error: 'No caregiver email is saved (Accessibility page).' };
     const cfg = store.getSetting('mail');
     const pass = secrets.get('mail-password');
-    if (!transport && (!cfg?.user || !pass)) return { sent: 0, error: 'Email is not connected (Inbox page), so no email could be sent.' };
+    if (!transport && (!cfg?.user || !pass)) return { sent: 0, telegram, error: 'Email is not connected (Inbox page), so no email could be sent.' };
     const mailer = transport || nodemailer.createTransport({ host: SMTP[cfg.host] || cfg.host.replace(/^imap\./, 'smtp.'), port: 465, secure: true, auth: { user: cfg.user, pass } });
-    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null, medical });
-    await mailer.sendMail({ from: cfg?.user || 'ather@localhost', to: contacts.join(', '), subject: test ? `Test: ${msg.subject}` : msg.subject,
-      text: test ? `This is only a test of Maya's emergency button. Nothing is wrong.\n\n---\n${msg.text}` : msg.text });
-    return { sent: contacts.length };
+    await mailer.sendMail({ from: cfg?.user || 'ather@localhost', to: contacts.join(', '), subject, text });
+    return { sent: contacts.length, telegram };
   }
 
   async function fire() {
@@ -4108,7 +4115,7 @@ export const splitMessage = (text) => {
 const newCode = () => String(randomInt(100000, 1000000));
 
 export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChange = () => {} }) {
-  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, ...store.getSetting('telegram', {}) });
+  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, caregivers: [], caregiverCode: '', ...store.getSetting('telegram', {}) });
   const save = (patch) => { store.setSetting('telegram', { ...state(), ...patch }); onChange(); };
   let running = false, error = null;
 
@@ -4125,6 +4132,16 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     const chatId = msg.chat?.id, text = String(msg.text || '').trim();
     if (!chatId || !text) return;
     const s = state();
+    const who = s.chat || 'the Maya user';
+    // Caregivers get alerts only: their messages never reach the AI or the user's data.
+    if (s.caregivers.some((c) => c.id === chatId)) return send(chatId, `This bot only sends alerts about ${who}: emergencies, missed medicines and the daily update. Messages here are not read.`);
+    if (chatId !== s.ownerId && s.caregiverCode && text.replace(/^\/start\s*/, '') === s.caregiverCode) {
+      const name = msg.from?.first_name || 'A caregiver';
+      save({ caregivers: [...s.caregivers, { id: chatId, name }], caregiverCode: newCode() }); // one-time: a shared code cannot be reused
+      await send(chatId, `✅ You will now get emergency alerts for ${who} from Maya: SOS, missed medicines and the daily update.`);
+      if (s.ownerId) await send(s.ownerId, `👥 ${name} joined as a caregiver. If that was not you, remove them in Maya (Connections → Telegram).`);
+      return;
+    }
     if (!s.ownerId) {
       if (text.replace(/^\/start\s*/, '') !== s.code) return send(chatId, 'Hi! To use me, send the 6-digit code shown in Maya on your PC (Connections → Telegram).');
       save({ ownerId: chatId, chat: msg.from?.first_name || 'you', code: '' });
@@ -4160,14 +4177,28 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
   }
 
   return {
-    status: () => { const s = state(); return { configured: !!secrets.get('telegram-token'), bot: s.bot, paired: !!s.ownerId, chat: s.chat, code: s.ownerId ? '' : s.code, running, error }; },
+    status: () => {
+      const s = state();
+      return { configured: !!secrets.get('telegram-token'), bot: s.bot, paired: !!s.ownerId, chat: s.chat, code: s.ownerId ? '' : s.code,
+        caregivers: s.caregivers, caregiverCode: s.caregiverCode, running, error };
+    },
+    /** Sends an alert (SOS, missed medicine, daily update) to every caregiver; the number reached. Never throws. */
+    async alertCaregivers(text) {
+      let reached = 0;
+      for (const c of state().caregivers) await send(c.id, text).then(() => reached++, () => {});
+      return reached;
+    },
+    removeCaregiver(id) { save({ caregivers: state().caregivers.filter((c) => c.id !== Number(id)) }); },
     /** Checks the token with Telegram, keeps it encrypted, and starts a fresh pairing. */
     async setToken(token) {
       token = String(token || '').trim();
       let me;
       try { me = await call('getMe', {}, token); } catch { throw new Error('Telegram did not accept this token. Copy it again from @BotFather (it looks like 123456:ABC…).'); }
       secrets.set('telegram-token', token);
-      save({ bot: me.username, ownerId: null, chat: '', code: newCode(), offset: 0 });
+      const code = newCode();
+      let caregiverCode = newCode();
+      while (caregiverCode === code) caregiverCode = newCode();
+      save({ bot: me.username, ownerId: null, chat: '', code, caregiverCode, caregivers: [], offset: 0 });
       error = null;
       return this.status();
     },
@@ -4284,6 +4315,7 @@ function Sos() {
       {s.note && <p className="info">Note: {s.note}</p>}
       {s.medical?.length > 0 && <section className="medical" aria-label="Medical ID"><h2>MEDICAL ID</h2><ul>{s.medical.map((l) => <li key={l}>{l}</li>)}</ul></section>}
       {(s.calling || s.call_error) && <p className="info">{s.calling ? `📞 Calling ${s.calling}…` : `⚠ ${s.call_error}`}</p>}
+      {s.telegram > 0 && <p className="info">✓ {s.telegram} caregiver{s.telegram > 1 ? 's were' : ' was'} alerted on Telegram.</p>}
       <p className="info">{s.sent ? `✓ ${s.sent} caregiver${s.sent > 1 ? 's were' : ' was'} emailed.` : s.error ? `⚠ ${s.error}` : 'Contacting caregivers…'}</p>
       <button autoFocus onClick={stop}>Help is here — stop the alarm</button>
     </div>
@@ -4806,6 +4838,7 @@ textarea.input { resize: vertical; min-height: 120px; }
 .big-sos { font-size: 18px; padding: 14px 26px; background: var(--bad); color: #fff; border-color: var(--bad); }
 .pair-code { display: inline-block; margin-top: 8px; font: 700 32px/1.2 ui-monospace, Consolas, monospace; letter-spacing: 6px; padding: 6px 14px; border: 2px dashed var(--accent); border-radius: var(--radius); }
 .steps { margin: 0 0 8px; padding-left: 20px; }
+.pair-code.small-code { font-size: 20px; letter-spacing: 4px; padding: 2px 10px; margin-top: 4px; }
 .medical-id { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 14px 2px; margin: 6px 0 10px; }
 .medical-id legend { padding: 0 6px; font-weight: 600; }
 .medical-id .small-print { font-size: 13px; margin: 0 0 6px; }
@@ -7244,6 +7277,16 @@ export default function Connections({ go, version }) {
           )}
           {tg?.configured && !tg.paired && (
             <p>Now open <b>@{tg.bot}</b> in Telegram on your phone and send this code:<br /><span className="pair-code" aria-label={`Pairing code ${tg.code.split('').join(' ')}`}>{tg.code}</span></p>
+          )}
+          {tg?.configured && (
+            <div className="field">
+              <b>👥 Caregivers</b> <span className="muted">get SOS alerts (with your Medical ID), missed medicines and the daily update. They cannot use Maya or see your data.</span>
+              {!!tg.caregivers?.length && <ul className="list">{tg.caregivers.map((c) => (
+                <li className="item" key={c.id}><span className="item-title">{c.name}</span>
+                  <button className="btn small" onClick={async () => setTg(await window.ather.telegramRemoveCaregiver(c.id))} aria-label={`Remove caregiver ${c.name}`}>Remove</button></li>
+              ))}</ul>}
+              <p className="muted">To add one, they message <b>@{tg.bot}</b> this one-time code: <span className="pair-code small-code" aria-label={`Caregiver code ${tg.caregiverCode.split('').join(' ')}`}>{tg.caregiverCode}</span></p>
+            </div>
           )}
           {tg?.error && <p className="muted" role="status">⚠ {tg.error}</p>}
           {tg?.configured && <button className="btn small" onClick={async () => setTg(await window.ather.telegramForget())}>Disconnect Telegram</button>}
@@ -20074,6 +20117,22 @@ test('SOS: the help sign and the email carry the Medical ID', async () => {
   assert.match(sent[0].text, /Allergies: Peanuts/);
 });
 
+test('SOS also alerts caregivers on Telegram, even with no caregiver email saved', async () => {
+  const store = openStore(':memory:');
+  store.setSetting('sos', { contacts: [], name: 'Ronald', medical: { blood: 'O+' } });
+  const alerts = [], shown = [];
+  const sos = createSos({ store, secrets: { get: () => null }, countdownMs: 20, onState: (s) => shown.push(s),
+    alert: async (text) => { alerts.push(text); return 2; } });
+  sos.trigger('said "help"');
+  await wait(400);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /SOS: Ronald needs help/);
+  assert.match(alerts[0], /Blood group: O\+/);
+  assert.equal(shown.at(-1).telegram, 2);
+  assert.equal((await sos.notify('did not confirm the BP tablet')).telegram, 2);
+  assert.match(alerts.at(-1), /did not confirm the BP tablet/);
+});
+
 test('Medical ID by voice: saves what was said, keeps the rest and the other SOS settings', async () => {
   const tool = allTools.find((t) => t.name === 'medical_id');
   assert.ok(tool, 'medical_id is registered');
@@ -20306,6 +20365,35 @@ test('reminders reach the paired phone, and nothing is sent before pairing', asy
   assert.deepEqual(tg.sent.at(-1), { chat_id: 5, text: '⏰ Medicine time: BP tablet' });
   tg.valid = false;
   await bot.notify('offline reminder'); // must never throw into the reminder timer
+});
+
+test('caregivers join with a one-time code, get alerts only, and can be removed', async () => {
+  const { tg, asked, bot } = await setup();
+  tg.say(5, bot.status().code); // the owner
+  await bot.pollOnce();
+  const code = bot.status().caregiverCode;
+  assert.match(code, /^\d{6}$/);
+  assert.notEqual(code, bot.status().code);
+  tg.say(7, `/start ${code}`, 'Priya');
+  await bot.pollOnce();
+  assert.deepEqual(bot.status().caregivers, [{ id: 7, name: 'Priya' }]);
+  assert.match(tg.sent.find((m) => m.chat_id === 7).text, /emergency alerts/i);
+  assert.match(tg.sent.find((m) => m.chat_id === 5 && /Priya/.test(m.text)).text, /joined as a caregiver/, 'the owner is told who joined');
+  assert.notEqual(bot.status().caregiverCode, code, 'a used code is replaced');
+  const before = tg.sent.length;
+  tg.say(8, code, 'Stranger'); // the old code no longer works, and strangers get nothing
+  await bot.pollOnce();
+  assert.equal(tg.sent.length, before);
+  assert.equal(bot.status().caregivers.length, 1);
+  tg.say(7, 'how is she doing?', 'Priya'); // a caregiver never reaches the AI or the user's data
+  await bot.pollOnce();
+  assert.equal(asked.length, 0);
+  assert.match(tg.sent.at(-1).text, /only sends alerts/i);
+  assert.equal(await bot.alertCaregivers('SOS: Ronald needs help'), 1);
+  assert.deepEqual(tg.sent.at(-1), { chat_id: 7, text: 'SOS: Ronald needs help' });
+  bot.removeCaregiver(7);
+  assert.deepEqual(bot.status().caregivers, []);
+  assert.equal(await bot.alertCaregivers('nobody'), 0);
 });
 
 test('each message is handled once, long answers are split, and a revoked token stops polling', async () => {
