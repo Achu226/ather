@@ -1,5 +1,6 @@
 import { classesBetween } from './student.js';
 import { now } from '../store.js';
+import { localIso } from '../services/calendar-feeds.js';
 
 const str = (description) => ({ type: 'string', description });
 const int = (description) => ({ type: 'integer', description });
@@ -92,10 +93,15 @@ export const productivityTools = [
     name: 'reminders_create',
     description: 'Set a reminder that pops up and plays a sound at an exact time. repeat: daily, weekdays or weekly. Not for "if someone does not reply" (use mail_follow_up).',
     parameters: obj({ text: str('What to remind about'), at: str('Local ISO date-time, e.g. 2026-10-28T18:30'),
+      in_days: { type: 'integer', description: 'Instead of at: this many days from today, at 9 am (e.g. 2 for "in 2 days")' },
       repeat: { type: 'string', enum: ['none', 'daily', 'weekdays', 'weekly'], description: 'Only when the user said every day / every weekday / every week; otherwise none' },
-      care: { type: 'boolean', description: 'true for medicine, tablets, insulin, injections, physio, drinking water for health: Maya waits for "done" and emails a caregiver if not confirmed' } }, ['text', 'at']),
-    run: ({ text, at, repeat, care }, { store }) =>
-      store.insert('reminders', { text, at, repeat: repeat === 'none' ? null : repeat, care: care ? 1 : 0, created_at: now() }, `Set reminder "${text}"`),
+      care: { type: 'boolean', description: 'true for medicine, tablets, insulin, injections, physio, drinking water for health: Maya waits for "done" and emails a caregiver if not confirmed' } }, ['text']),
+    run: ({ text, at, in_days, repeat, care }, { store }) => {
+      // Days ahead are counted here: small models get date maths wrong (a refill set for the day the tablets run out).
+      if (!at && Number.isInteger(in_days)) { const d = new Date(); d.setDate(d.getDate() + Math.max(0, in_days)); d.setHours(9, 0, 0, 0); at = localIso(d); }
+      if (!at) throw new Error('Give the reminder a time: at or in_days.');
+      return store.insert('reminders', { text, at, repeat: repeat === 'none' ? null : repeat, care: care ? 1 : 0, created_at: now() }, `Set reminder "${text}"`);
+    },
   },
   {
     name: 'reminders_query',

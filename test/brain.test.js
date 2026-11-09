@@ -12,6 +12,23 @@ const { ask } = await import('../src/main/brain.js');
 const { OLLAMA } = await import('../src/main/ollama.js');
 
 const running = await fetch(`${OLLAMA}/api/version`).then((r) => r.ok, () => false);
+const has9b = running && (await fetch(`${OLLAMA}/api/tags`).then((r) => r.json()).then((d) => d.models.some((m) => /^ather-smart/.test(m.name)), () => false));
+
+/** The model ask() ends up using for this sentence (its last "model" event; stopped before the model runs). */
+async function modelFor(text) {
+  const { allTools } = await import('../src/main/tools/index.js');
+  const stop = new AbortController();
+  let key = null;
+  await ask({ text, store: openStore(':memory:'), tools: allTools, services: {}, signal: stop.signal,
+    onEvent: (e) => { if (e.type === 'model') { key = e.key; stop.abort(); } } }).catch(() => {});
+  return key;
+}
+
+test('mouse-and-keyboard jobs get the 9B brain; plain questions stay fast', { skip: !has9b && 'ather-smart (9B) not installed' }, async () => {
+  assert.equal(await modelFor('Open the Calculator app and use the mouse and keyboard in it to work out 12 times 7'), 'smart');
+  assert.equal(await modelFor('click the save button'), 'smart');
+  assert.equal(await modelFor('set volume to 30'), 'fast');
+});
 
 test('brain turns a sentence into a task and answers', { skip: !running && 'Ollama not running', timeout: 300_000 }, async () => {
   const store = openStore(':memory:');

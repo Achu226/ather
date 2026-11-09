@@ -11,6 +11,16 @@ const { productivityTools } = await import('../src/main/tools/productivity.js');
 const store = openStore(':memory:');
 const call = (name, args = {}) => productivityTools.find((t) => t.name === name).run(args, { store });
 
+test('a reminder can be set some days ahead without date maths (9 am that day)', () => {
+  const day = new Date();
+  day.setDate(day.getDate() + 2);
+  const ymd = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  const r = call('reminders_create', { text: 'Refill BP tablets', in_days: 2, care: true });
+  assert.equal(r.at, `${ymd}T09:00`);
+  assert.equal(call('reminders_create', { text: 'exact', at: '2026-12-01T18:30', in_days: 5 }).at, '2026-12-01T18:30', 'an exact time wins');
+  assert.throws(() => call('reminders_create', { text: 'when?' }), /at or in_days/);
+});
+
 test('task lifecycle with undo', () => {
   const t = call('tasks_create', { title: 'Study DBMS', due: '2026-10-29T17:00' });
   assert.equal(t.title, 'Study DBMS');

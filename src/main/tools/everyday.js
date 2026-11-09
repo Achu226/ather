@@ -3,6 +3,7 @@
 import { now } from '../store.js';
 import { matchApp } from '../services/pc.js';
 import { INTERPRETER_LANGUAGES } from '../services/interpreter.js';
+import { KINDS, findAccessible } from '../services/places.js';
 
 const str = (description) => ({ type: 'string', description });
 const obj = (properties, required = []) => ({ type: 'object', properties, required });
@@ -28,6 +29,21 @@ export function whereOnScreen({ x, y }, b) {
 export const firstVideoId = (html) => /"videoId":"([\w-]{11})"/.exec(html)?.[1] ?? null;
 
 export const everydayTools = [
+  {
+    name: 'places_accessible',
+    description: 'Find wheelchair-accessible places near a town or area (hospital, pharmacy, accessible toilets, restaurant…) from OpenStreetMap. '
+      + 'Accessible ones come first. Read out the top 3 with distance and access; say "unknown" places should be called first.',
+    parameters: obj({
+      kind: { type: 'string', enum: Object.keys(KINDS), description: 'Kind of place' },
+      near: str('Town, city or area. Leave empty for the user\'s saved city.'),
+      radius_km: { type: 'number', description: 'Search radius in km (default 3, at most 10)' },
+    }, ['kind']),
+    run: async ({ kind, near, radius_km }, { store, services }) => {
+      const where = String(near || '').trim() || store.getSetting('city', '');
+      if (!where) return { ask_user: 'Ask the user which town or area to search near (they can also save their city in Settings).' };
+      return findAccessible({ kind, near: where, radiusKm: radius_km }, { fetchFn: services?.fetch || fetch });
+    },
+  },
   {
     name: 'screen_point',
     description: 'Show the user where something is in the window they are using: "where is the Save button?", "where do I click to attach?". Draws an arrow at it on screen.',
