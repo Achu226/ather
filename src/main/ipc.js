@@ -23,6 +23,7 @@ import { systemCheck } from './services/syscheck.js';
 import { MAIL_PRESETS } from './services/mail.js';
 import { careDone } from './services/scheduler.js';
 import { fixHeard, learnWord, wordFixes, saveFeedback, reflect } from './services/learning.js';
+import { learnSkill, saveSkill } from './services/skills.js';
 import { workToday } from './services/worklog.js';
 import { chromeProfiles } from './services/pc.js';
 import { finishDictation } from './services/dictate.js';
@@ -137,6 +138,11 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
       updateSummary(store, conv).catch(() => {});
       // Think back on what the user said and keep the lasting facts (local model, in the background).
       reflect(store, text, answer, (p, o) => complete(p, o)).then((kept) => kept.length && changed()).catch(() => {});
+      // A job that worked and no skill covered becomes a skill offer; it is kept only if the user says yes.
+      const done = store.get("SELECT tools FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", conv);
+      learnSkill(store, text, JSON.parse(done?.tools || '[]'), (p, o) => complete(p, o))
+        .then(async (skill) => { if (skill && await requestApproval(event.sender, { name: 'skills_learn', args: skill })) { saveSkill(store, skill); changed(); } })
+        .catch(() => {});
       return answer;
     } finally {
       running.delete(id);

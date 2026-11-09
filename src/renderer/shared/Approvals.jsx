@@ -17,7 +17,9 @@ const TITLES = {
 };
 
 /** The question on the card (also spoken when the user answers by voice). */
-export const approvalTitle = (r) => (r.name === 'mail_send' && r.args?.to ? `Send this email to ${r.args.to}?` : TITLES[r.name] || `Allow ${r.name.replace(/_/g, ' ')}?`);
+export const approvalTitle = (r) => (r.name === 'mail_send' && r.args?.to ? `Send this email to ${r.args.to}?`
+  : r.name === 'skills_learn' ? `I learned how to do this. Shall I remember it as the skill "${r.args?.name}"?`
+  : TITLES[r.name] || `Allow ${r.name.replace(/_/g, ' ')}?`);
 
 function details(name, args) {
   if (name === 'python_run') return `\`\`\`python\n${args.code}\n\`\`\``;
@@ -31,6 +33,7 @@ function details(name, args) {
   }
   if (name === 'mail_send') return `**To:** ${args.to}\n**Subject:** ${args.subject}\n\n${args.text}`;
   if (name === 'mail_reply') return args.text;
+  if (name === 'skills_learn') return `**When:** ${args.when}\n\n${args.steps}\n\nYou can switch it off or delete it on the Skills page.`;
   if (name === 'mail_archive') return `**${args.uids?.length || 0}** email(s). They stay in your archive; nothing is deleted.`;
   if (name === 'mail_add_tasks') return args.items?.map((i) => `- ${i.kind}: **${i.title}**${i.when ? ` (${i.when.replace('T', ' ')})` : ''}`).join('\n');
   return `\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\``;
@@ -60,10 +63,10 @@ export default function Approvals({ onPending = () => {} }) {
 
   return requests.map((r) => (
     <div key={r.id} className="approval" role="alertdialog" aria-label={approvalTitle(r)}>
-      <b>⚠ {approvalTitle(r)}</b>
+      <b>{r.name === 'skills_learn' ? '💡' : '⚠'} {approvalTitle(r)}</b>
       <div className="approval-body"><Markdown text={details(r.name, r.args || {})} /></div>
       <div className="row">
-        <button className="btn small primary" onClick={() => answer(r.id, true)}>{r.name === 'python_run' ? '▶ Run' : 'Allow'}</button>
+        <button className="btn small primary" onClick={() => answer(r.id, true)}>{r.name === 'python_run' ? '▶ Run' : r.name === 'skills_learn' ? 'Keep it' : 'Allow'}</button>
         <button className="btn small" onClick={() => answer(r.id, false)}>Cancel</button>
       </div>
     </div>

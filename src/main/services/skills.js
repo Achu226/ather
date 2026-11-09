@@ -2,6 +2,7 @@
 // A dozen come built in; the user teaches more by voice or on the Skills page. The best match for a request
 // adds its steps to the instructions and its tools to the ones offered.
 import { now } from '../store.js';
+import { looksLikePassword } from './clipboard.js';
 
 export const BUILTIN = [
   ['Research report', 'research a topic and write a report or essay about it', 'Search the web (web_search, web_read) for 3-5 good sources. Write a clear report with headings, an introduction, main points and a conclusion, and list the sources at the end. Save it with files_make_document and tell the user where it is.', '^(web_|files_make_document)'],
@@ -63,4 +64,34 @@ export function saveSkill(store, { name, when, steps, tools = '' }) {
   if (row) store.run('UPDATE skills SET "when" = ?, steps = ?, tools = ?, enabled = 1 WHERE id = ?', when.trim(), steps.trim(), tools, row.id);
   else store.run('INSERT INTO skills (name, "when", steps, tools, created_at) VALUES (?,?,?,?,?)', name.trim(), when.trim(), steps.trim(), tools, now());
   return { saved: name.trim() };
+}
+
+const LOOKUP = /^(agent_|time_|web_)|_(query|status|progress|list|search|read|look)$/;
+const secret = (s) => /\b(password|passcode|pin|otp|cvv|card number)\b/i.test(s) || String(s).split(/\s+/).some(looksLikePassword);
+
+/** The calls of a finished job that worked: planning, failed and refused calls left out. Exported for tests. */
+export const jobSteps = (toolLog) => toolLog.filter((t) => !t.name.startsWith('agent_') && !t.result?.error && !t.result?.denied);
+
+/**
+ * Hermes-style learning: a multi-step job that just worked, which no skill covered, is written up by the local
+ * model as a skill the user can keep. Returns the offer (not saved) or null. Its tools are the ones the job
+ * really used, never what the model writes, so a learned skill cannot reach anything new.
+ */
+export async function learnSkill(store, question, toolLog, complete) {
+  const last = toolLog.at(-1)?.result;
+  if (String(question).trim().split(/\s+/).length < 4 || secret(question) || last?.error || toolLog.some((t) => t.result?.denied)) return null;
+  const steps = jobSteps(toolLog);
+  const names = [...new Set(steps.map((t) => t.name))];
+  if (steps.filter((t) => !LOOKUP.test(t.name)).length < 3 || names.length < 2 || matchSkill(store, question)) return null;
+  const done = steps.map((t, i) => `${i + 1}. ${t.name} ${JSON.stringify(t.args).slice(0, 200)}`).join('\n');
+  const raw = await complete(`The user asked their assistant Maya: "${String(question).slice(0, 500)}"\nMaya did it with these tool calls:\n${done}\n\n`
+    + 'Write this as a reusable skill so Maya can do the same kind of job again. name: 2 to 5 words. when: the kinds of requests it is for, in plain words. '
+    + 'steps: short numbered steps naming the tools to call. Keep it general: write "the contact the user names", "the file the user names", never the actual names, numbers, messages or paths. Reply as JSON.',
+  { format: { type: 'object', required: ['name', 'when', 'steps'], properties: { name: { type: 'string' }, when: { type: 'string' }, steps: { type: 'string' } } } });
+  let skill;
+  try { skill = JSON.parse(raw); } catch { return null; }
+  const name = String(skill.name || '').trim(), when = String(skill.when || '').trim(), how = String(skill.steps || '').trim();
+  if (!name || name.length > 40 || !when || when.length > 300 || !how || how.length > 2000 || secret(how)) return null;
+  if (store.get('SELECT id FROM skills WHERE lower(name) = lower(?)', name)) return null;
+  return { name, when, steps: how, tools: `^(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$` };
 }
