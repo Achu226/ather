@@ -6,5 +6,6 @@
 - 2026-11-09 Accessibility skills pack: names use rare words (one name word alone picks a skill). Day maths is done in code: reminders_create takes in_days (9 am).
 - 2026-11-09 Medical ID lives in the `sos` setting (`medical`); shown on the SOS sign and sent with the SOS email; medical_ tools are CLOUD_PRIVATE (now exported + unit-tested).
 - 2026-11-09 Telegram remote: token in secrets, first chat sending the 6-digit code is the owner, strangers get no reply, every confirm() is refused from the phone ("approve on the PC"). Phone chats go to the "From my phone (Telegram)" conversation.
+- 2026-11-09 Caregivers on Telegram: one-time caregiver code (regenerated after use), owner is told who joined, caregivers get alerts only (never the AI). sos.js email() sends every alert to Telegram first, so it works without an email account.
 - 2026-11-09 computer.test skips the live Notepad test when the user's Notepad is open (Win11 opens it as a tab of theirs) and only kills its own.
 - 2026-11-09 Project lives in D:\ather 2.0 on the new PC (was E:\); git repo started here at 1.8.2 (commit 60bb89d).

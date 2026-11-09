@@ -95,6 +95,35 @@ test('reminders reach the paired phone, and nothing is sent before pairing', asy
   await bot.notify('offline reminder'); // must never throw into the reminder timer
 });
 
+test('caregivers join with a one-time code, get alerts only, and can be removed', async () => {
+  const { tg, asked, bot } = await setup();
+  tg.say(5, bot.status().code); // the owner
+  await bot.pollOnce();
+  const code = bot.status().caregiverCode;
+  assert.match(code, /^\d{6}$/);
+  assert.notEqual(code, bot.status().code);
+  tg.say(7, `/start ${code}`, 'Priya');
+  await bot.pollOnce();
+  assert.deepEqual(bot.status().caregivers, [{ id: 7, name: 'Priya' }]);
+  assert.match(tg.sent.find((m) => m.chat_id === 7).text, /emergency alerts/i);
+  assert.match(tg.sent.find((m) => m.chat_id === 5 && /Priya/.test(m.text)).text, /joined as a caregiver/, 'the owner is told who joined');
+  assert.notEqual(bot.status().caregiverCode, code, 'a used code is replaced');
+  const before = tg.sent.length;
+  tg.say(8, code, 'Stranger'); // the old code no longer works, and strangers get nothing
+  await bot.pollOnce();
+  assert.equal(tg.sent.length, before);
+  assert.equal(bot.status().caregivers.length, 1);
+  tg.say(7, 'how is she doing?', 'Priya'); // a caregiver never reaches the AI or the user's data
+  await bot.pollOnce();
+  assert.equal(asked.length, 0);
+  assert.match(tg.sent.at(-1).text, /only sends alerts/i);
+  assert.equal(await bot.alertCaregivers('SOS: Ronald needs help'), 1);
+  assert.deepEqual(tg.sent.at(-1), { chat_id: 7, text: 'SOS: Ronald needs help' });
+  bot.removeCaregiver(7);
+  assert.deepEqual(bot.status().caregivers, []);
+  assert.equal(await bot.alertCaregivers('nobody'), 0);
+});
+
 test('each message is handled once, long answers are split, and a revoked token stops polling', async () => {
   const { tg, asked, bot, secrets } = await setup({ answer: async () => 'x'.repeat(9000) });
   tg.say(5, bot.status().code);

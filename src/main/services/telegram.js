@@ -17,7 +17,7 @@ export const splitMessage = (text) => {
 const newCode = () => String(randomInt(100000, 1000000));
 
 export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChange = () => {} }) {
-  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, ...store.getSetting('telegram', {}) });
+  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, caregivers: [], caregiverCode: '', ...store.getSetting('telegram', {}) });
   const save = (patch) => { store.setSetting('telegram', { ...state(), ...patch }); onChange(); };
   let running = false, error = null;
 
@@ -34,6 +34,16 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     const chatId = msg.chat?.id, text = String(msg.text || '').trim();
     if (!chatId || !text) return;
     const s = state();
+    const who = s.chat || 'the Maya user';
+    // Caregivers get alerts only: their messages never reach the AI or the user's data.
+    if (s.caregivers.some((c) => c.id === chatId)) return send(chatId, `This bot only sends alerts about ${who}: emergencies, missed medicines and the daily update. Messages here are not read.`);
+    if (chatId !== s.ownerId && s.caregiverCode && text.replace(/^\/start\s*/, '') === s.caregiverCode) {
+      const name = msg.from?.first_name || 'A caregiver';
+      save({ caregivers: [...s.caregivers, { id: chatId, name }], caregiverCode: newCode() }); // one-time: a shared code cannot be reused
+      await send(chatId, `✅ You will now get emergency alerts for ${who} from Maya: SOS, missed medicines and the daily update.`);
+      if (s.ownerId) await send(s.ownerId, `👥 ${name} joined as a caregiver. If that was not you, remove them in Maya (Connections → Telegram).`);
+      return;
+    }
     if (!s.ownerId) {
       if (text.replace(/^\/start\s*/, '') !== s.code) return send(chatId, 'Hi! To use me, send the 6-digit code shown in Maya on your PC (Connections → Telegram).');
       save({ ownerId: chatId, chat: msg.from?.first_name || 'you', code: '' });
@@ -69,14 +79,28 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
   }
 
   return {
-    status: () => { const s = state(); return { configured: !!secrets.get('telegram-token'), bot: s.bot, paired: !!s.ownerId, chat: s.chat, code: s.ownerId ? '' : s.code, running, error }; },
+    status: () => {
+      const s = state();
+      return { configured: !!secrets.get('telegram-token'), bot: s.bot, paired: !!s.ownerId, chat: s.chat, code: s.ownerId ? '' : s.code,
+        caregivers: s.caregivers, caregiverCode: s.caregiverCode, running, error };
+    },
+    /** Sends an alert (SOS, missed medicine, daily update) to every caregiver; the number reached. Never throws. */
+    async alertCaregivers(text) {
+      let reached = 0;
+      for (const c of state().caregivers) await send(c.id, text).then(() => reached++, () => {});
+      return reached;
+    },
+    removeCaregiver(id) { save({ caregivers: state().caregivers.filter((c) => c.id !== Number(id)) }); },
     /** Checks the token with Telegram, keeps it encrypted, and starts a fresh pairing. */
     async setToken(token) {
       token = String(token || '').trim();
       let me;
       try { me = await call('getMe', {}, token); } catch { throw new Error('Telegram did not accept this token. Copy it again from @BotFather (it looks like 123456:ABC…).'); }
       secrets.set('telegram-token', token);
-      save({ bot: me.username, ownerId: null, chat: '', code: newCode(), offset: 0 });
+      const code = newCode();
+      let caregiverCode = newCode();
+      while (caregiverCode === code) caregiverCode = newCode();
+      save({ bot: me.username, ownerId: null, chat: '', code, caregiverCode, caregivers: [], offset: 0 });
       error = null;
       return this.status();
     },

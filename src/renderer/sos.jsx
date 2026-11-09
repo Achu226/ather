@@ -53,6 +53,7 @@ function Sos() {
       {s.note && <p className="info">Note: {s.note}</p>}
       {s.medical?.length > 0 && <section className="medical" aria-label="Medical ID"><h2>MEDICAL ID</h2><ul>{s.medical.map((l) => <li key={l}>{l}</li>)}</ul></section>}
       {(s.calling || s.call_error) && <p className="info">{s.calling ? `📞 Calling ${s.calling}…` : `⚠ ${s.call_error}`}</p>}
+      {s.telegram > 0 && <p className="info">✓ {s.telegram} caregiver{s.telegram > 1 ? 's were' : ' was'} alerted on Telegram.</p>}
       <p className="info">{s.sent ? `✓ ${s.sent} caregiver${s.sent > 1 ? 's were' : ' was'} emailed.` : s.error ? `⚠ ${s.error}` : 'Contacting caregivers…'}</p>
       <button autoFocus onClick={stop}>Help is here — stop the alarm</button>
     </div>

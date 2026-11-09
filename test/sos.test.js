@@ -56,6 +56,22 @@ test('SOS: the help sign and the email carry the Medical ID', async () => {
   assert.match(sent[0].text, /Allergies: Peanuts/);
 });
 
+test('SOS also alerts caregivers on Telegram, even with no caregiver email saved', async () => {
+  const store = openStore(':memory:');
+  store.setSetting('sos', { contacts: [], name: 'Ronald', medical: { blood: 'O+' } });
+  const alerts = [], shown = [];
+  const sos = createSos({ store, secrets: { get: () => null }, countdownMs: 20, onState: (s) => shown.push(s),
+    alert: async (text) => { alerts.push(text); return 2; } });
+  sos.trigger('said "help"');
+  await wait(400);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /SOS: Ronald needs help/);
+  assert.match(alerts[0], /Blood group: O\+/);
+  assert.equal(shown.at(-1).telegram, 2);
+  assert.equal((await sos.notify('did not confirm the BP tablet')).telegram, 2);
+  assert.match(alerts.at(-1), /did not confirm the BP tablet/);
+});
+
 test('Medical ID by voice: saves what was said, keeps the rest and the other SOS settings', async () => {
   const tool = allTools.find((t) => t.name === 'medical_id');
   assert.ok(tool, 'medical_id is registered');

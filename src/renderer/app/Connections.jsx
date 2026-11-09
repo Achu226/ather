@@ -95,6 +95,16 @@ export default function Connections({ go, version }) {
           {tg?.configured && !tg.paired && (
             <p>Now open <b>@{tg.bot}</b> in Telegram on your phone and send this code:<br /><span className="pair-code" aria-label={`Pairing code ${tg.code.split('').join(' ')}`}>{tg.code}</span></p>
           )}
+          {tg?.configured && (
+            <div className="field">
+              <b>👥 Caregivers</b> <span className="muted">get SOS alerts (with your Medical ID), missed medicines and the daily update. They cannot use Maya or see your data.</span>
+              {!!tg.caregivers?.length && <ul className="list">{tg.caregivers.map((c) => (
+                <li className="item" key={c.id}><span className="item-title">{c.name}</span>
+                  <button className="btn small" onClick={async () => setTg(await window.ather.telegramRemoveCaregiver(c.id))} aria-label={`Remove caregiver ${c.name}`}>Remove</button></li>
+              ))}</ul>}
+              <p className="muted">To add one, they message <b>@{tg.bot}</b> this one-time code: <span className="pair-code small-code" aria-label={`Caregiver code ${tg.caregiverCode.split('').join(' ')}`}>{tg.caregiverCode}</span></p>
+            </div>
+          )}
           {tg?.error && <p className="muted" role="status">⚠ {tg.error}</p>}
           {tg?.configured && <button className="btn small" onClick={async () => setTg(await window.ather.telegramForget())}>Disconnect Telegram</button>}
         </Card>

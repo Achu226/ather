@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('ather', {
   telegramStatus: invoke('telegram:status'),
   telegramSetToken: invoke('telegram:setToken'),
   telegramForget: invoke('telegram:forget'),
+  telegramRemoveCaregiver: invoke('telegram:removeCaregiver'),
   onSos: on('sos'),
   onSession: on('session'),
   sessionExtend: invoke('session:extend'),

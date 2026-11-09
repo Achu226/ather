@@ -158,7 +158,9 @@ app.whenReady().then(async () => {
   services.sos = createSos({ store, secrets, onState: (s) => {
     windows.sos(s.state === 'cancelled' || s.state === 'off' ? null : s);
     windows.toNotch('sos', s);
-  }, call: (number) => phoneCall({ pc: services.pc, open: (url) => shell.openExternal(url), number }) });
+  }, call: (number) => phoneCall({ pc: services.pc, open: (url) => shell.openExternal(url), number }),
+  // Caregivers paired on Telegram get the same alerts (services.telegram is made just below, so it is looked up when sent).
+  alert: (text) => services.telegram?.alertCaregivers(text) ?? Promise.resolve(0) });
   // Maya from the phone (Telegram): its own conversation, so the chat shows up on the PC too.
   const phoneConversation = () => {
     const id = store.getSetting('phoneConversation');

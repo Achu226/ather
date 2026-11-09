@@ -186,6 +186,7 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('telegram:status', () => services.telegram.status());
   handle('telegram:setToken', async (token) => { const s = await services.telegram.setToken(token); services.telegram.start(); return s; });
   handle('telegram:forget', () => { services.telegram.forget(); return services.telegram.status(); });
+  handle('telegram:removeCaregiver', (id) => { services.telegram.removeCaregiver(id); return services.telegram.status(); });
   ipcMain.on('voice:heard', () => { services.lastVoice = Date.now(); });
   handle('headmouse:set', (on) => services.headMouse.set(on));
   handle('headmouse:model', async () => readFileSync(await downloadFile('facemesh')));

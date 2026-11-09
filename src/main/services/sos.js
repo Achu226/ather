@@ -71,7 +71,7 @@ export async function phoneCall({ pc, open, number, tries = 12 }) {
  * onState({ state: 'countdown' | 'alarm' | 'cancelled' | 'off', seconds, reason, sent, error }) drives the SOS window and the face.
  * transport: a nodemailer transport (tests pass a JSON one).
  */
-export function createSos({ store, secrets, onState = () => {}, transport, call = null, countdownMs = 10_000, locate = approxLocation }) {
+export function createSos({ store, secrets, onState = () => {}, transport, call = null, countdownMs = 10_000, locate = approxLocation, alert = async () => 0 }) {
   let pending = null;
   const settings = () => ({ ...SOS_DEFAULTS, ...store.getSetting('sos', SOS_DEFAULTS) });
   // The SOS screen shows these even while Maya is PIN-locked, so they travel with each state.
@@ -80,15 +80,18 @@ export function createSos({ store, secrets, onState = () => {}, transport, call 
 
   async function email(reason, { test = false, message = null } = {}) {
     const { contacts, name, note, shareLocation, medical } = settings();
-    if (!contacts.length) return { sent: 0, error: 'No caregiver email is saved (Accessibility page).' };
+    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null, medical });
+    const subject = test ? `Test: ${msg.subject}` : msg.subject;
+    const text = test ? `This is only a test of Maya's emergency button. Nothing is wrong.\n\n---\n${msg.text}` : msg.text;
+    // Telegram caregivers first and independently: it works even when no email account is connected.
+    const telegram = await alert(`${subject}\n\n${text}`).catch(() => 0);
+    if (!contacts.length) return { sent: 0, telegram, error: 'No caregiver email is saved (Accessibility page).' };
     const cfg = store.getSetting('mail');
     const pass = secrets.get('mail-password');
-    if (!transport && (!cfg?.user || !pass)) return { sent: 0, error: 'Email is not connected (Inbox page), so no email could be sent.' };
+    if (!transport && (!cfg?.user || !pass)) return { sent: 0, telegram, error: 'Email is not connected (Inbox page), so no email could be sent.' };
     const mailer = transport || nodemailer.createTransport({ host: SMTP[cfg.host] || cfg.host.replace(/^imap\./, 'smtp.'), port: 465, secure: true, auth: { user: cfg.user, pass } });
-    const msg = message || sosEmail({ name, note, reason, at: new Date(), location: shareLocation && !test ? await locate() : null, medical });
-    await mailer.sendMail({ from: cfg?.user || 'ather@localhost', to: contacts.join(', '), subject: test ? `Test: ${msg.subject}` : msg.subject,
-      text: test ? `This is only a test of Maya's emergency button. Nothing is wrong.\n\n---\n${msg.text}` : msg.text });
-    return { sent: contacts.length };
+    await mailer.sendMail({ from: cfg?.user || 'ather@localhost', to: contacts.join(', '), subject, text });
+    return { sent: contacts.length, telegram };
   }
 
   async function fire() {
