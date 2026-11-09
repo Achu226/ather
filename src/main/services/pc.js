@@ -289,6 +289,18 @@ export function describeWindow(process, title) {
 }
 
 /** scale() is the main screen's scale factor (1.25 at 125%), from Electron; control positions come back in scaled pixels. */
+/** Carries out a face gesture's action at the pointer (the list is FACE_ACTIONS in renderer/shared/headpose.js). */
+export async function faceAction(pc, action) {
+  const run = {
+    click: () => pc.clickHere('left'), right: () => pc.clickHere('right'),
+    double: async () => { await pc.clickHere('left'); await pc.clickHere('left'); },
+    scrollUp: () => pc.scroll(360), scrollDown: () => pc.scroll(-360),
+    enter: () => pc.keys('{ENTER}'), escape: () => pc.keys('{ESC}'), tab: () => pc.keys('{TAB}'),
+  }[action];
+  if (!run) throw new Error(`Unknown face action "${action}"`);
+  return run();
+}
+
 export function createPc({ shell, scale = () => 1, chromeChoice = () => null }) {
   let child = null;
   let seq = 0;

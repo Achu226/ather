@@ -25,6 +25,16 @@ export default function Connections({ go, version }) {
   const [providers, setProviders] = useState([]);
   const [msg, setMsg] = useState(null);
   const [tg, setTg] = useState(null);
+  const [watches, setWatches] = useState([]);
+  const [watchUrl, setWatchUrl] = useState('');
+  const [watchWhat, setWatchWhat] = useState('');
+  const loadWatches = () => window.ather.tool('watch_list', {}).then(setWatches).catch(() => {});
+  useEffect(() => { loadWatches(); }, [version]);
+  const addWatch = async (e) => {
+    e.preventDefault();
+    try { await window.ather.tool('watch_add', { url: watchUrl, what: watchWhat || watchUrl }); setWatchUrl(''); setWatchWhat(''); setMsg('✓ Watching it: the first check is within 10 minutes.'); loadWatches(); }
+    catch (err) { setMsg(`⚠ ${errText(err)}`); }
+  };
   const [token, setToken] = useState('');
   useEffect(() => { window.ather.telegramStatus?.().then(setTg).catch(() => {}); }, [version]);
   const connectTelegram = async (e) => {
@@ -96,6 +106,12 @@ export default function Connections({ go, version }) {
             <p>Now open <b>@{tg.bot}</b> in Telegram on your phone and send this code:<br /><span className="pair-code" aria-label={`Pairing code ${tg.code.split('').join(' ')}`}>{tg.code}</span></p>
           )}
           {tg?.configured && (
+            <div className="field"><label htmlFor="tg-voice">🎙️ Send Maya voice notes; she hears them on this PC. Answer by voice:</label>
+              <select id="tg-voice" className="input" value={tg.voiceReplies || 'voice-notes'} onChange={async (e) => setTg(await window.ather.telegramVoiceReplies(e.target.value))}>
+                <option value="voice-notes">After my voice notes</option><option value="always">Always</option><option value="never">Never (text only)</option>
+              </select></div>
+          )}
+          {tg?.configured && (
             <div className="field">
               <b>👥 Caregivers</b> <span className="muted">get SOS alerts (with your Medical ID), missed medicines and the daily update. They cannot use Maya or see your data.</span>
               {!!tg.caregivers?.length && <ul className="list">{tg.caregivers.map((c) => (
@@ -107,6 +123,19 @@ export default function Connections({ go, version }) {
           )}
           {tg?.error && <p className="muted" role="status">⚠ {tg.error}</p>}
           {tg?.configured && <button className="btn small" onClick={async () => setTg(await window.ather.telegramForget())}>Disconnect Telegram</button>}
+        </Card>
+
+        <Card icon="🔔" name="Watch a website" on={watches.length > 0}
+          detail="Maya re-reads a page every few hours and tells you when it changes (also on Telegram): exam results, a notice, a price." say="tell me when https://… changes">
+          {!!watches.length && <ul className="list">{watches.map((w) => (
+            <li className="item" key={w.id}><span className="item-title"><b>{w.what}</b> <small className="muted">{w.error ? `⚠ ${w.error}` : w.checked ? `checked ${new Date(w.checked).toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}` : 'first check soon'} · every {w.every_hours} h</small></span>
+              <button className="btn small" onClick={() => window.ather.tool('watch_remove', { which: w.id }).then(loadWatches)} aria-label={`Stop watching ${w.what}`}>Stop</button></li>
+          ))}</ul>}
+          <form className="row wrap" onSubmit={addWatch}>
+            <input className="input" style={{ width: 150 }} placeholder="Name (e.g. Results)" value={watchWhat} onChange={(e) => setWatchWhat(e.target.value)} aria-label="Watch name" />
+            <input className="input" style={{ flex: 1, minWidth: 200 }} placeholder="https://…" value={watchUrl} onChange={(e) => setWatchUrl(e.target.value)} aria-label="Page to watch" />
+            <button className="btn primary" disabled={!watchUrl.trim()}>Watch</button>
+          </form>
         </Card>
 
         <Card icon="🔌" name="More tools (MCP)" on detail="GitHub, files, browser automation, docs and more, as connected tools Maya can use." >

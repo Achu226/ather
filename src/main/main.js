@@ -37,6 +37,9 @@ async function printPdf(html) {
 import { fileURLToPath } from 'node:url';
 import { openStore, now } from './store.js';
 import { createTelegram } from './services/telegram.js';
+import { createWatches } from './services/watch.js';
+import { speakReply } from './speech.js';
+import { fixHeard } from './services/learning.js';
 import { createMl } from './ml/client.js';
 import { createSecrets } from './secrets.js';
 import { createWindows } from './windows.js';
@@ -169,8 +172,23 @@ app.whenReady().then(async () => {
     store.setSetting('phoneConversation', fresh);
     return fresh;
   };
+  // Voice notes: Chromium in the notch decodes/encodes the audio (renderer/shared/voicenotes.js); base64 crosses over.
+  const inNotch = (js) => windows.notch.webContents.executeJavaScript(js);
+  const samplesFrom = (b64) => new Float32Array(Uint8Array.from(Buffer.from(b64, 'base64')).buffer); // fresh, aligned copy
+  services.voiceCodec = {
+    decode: async (bytes) => samplesFrom(await inNotch(`window.mayaVoice.decodeVoice(${JSON.stringify(Buffer.from(bytes).toString('base64'))})`)),
+    encode: async ({ samples, sampleRate }) => {
+      const b64 = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength).toString('base64');
+      return { bytes: Buffer.from(await inNotch(`window.mayaVoice.encodeVoice(${JSON.stringify(b64)}, ${Number(sampleRate)})`), 'base64'), mime: 'audio/mp4' };
+    },
+  };
   services.telegram = createTelegram({
     store, secrets, onChange: () => windows.broadcast('data:changed'),
+    transcribe: async (bytes) => fixHeard(store, await ml.call('transcribe', await services.voiceCodec.decode(bytes), store.getSetting('listenLanguage', null))),
+    speak: async (text) => {
+      const audio = await speakReply(text, { ml, store, providers: services.providers });
+      return audio?.samples ? services.voiceCodec.encode(audio) : null;
+    },
     answer: async (text, { confirm }) => {
       const reply = await ask({ text, store, tools: [...allTools, ...services.mcpClient.tools()], services: { ...services, confirm }, conversationId: phoneConversation(), style: 'short' });
       windows.broadcast('data:changed');
@@ -200,7 +218,7 @@ app.whenReady().then(async () => {
     },
   });
   services.headMouse = {
-    set(on) { windows.headMouse(on ? { speed: store.getSetting('headMouseSpeed', 1), dwell: a11y().dwell, blink: a11y().blink } : null); return { on }; },
+    set(on) { windows.headMouse(on ? { speed: store.getSetting('headMouseSpeed', 1), dwell: a11y().dwell, blink: a11y().blink, faces: a11y().faceActions } : null); return { on }; },
     get on() { return windows.headMouseOpen; },
   };
   services.complete = (prompt) => complete(prompt);
@@ -360,6 +378,9 @@ app.whenReady().then(async () => {
     if (kind === 'reminder' || kind === 'care') services.telegram.notify(`⏰ ${title}: ${body}`);
   };
   startScheduler(store, notify);
+  // Watched web pages: checked when due; a change is a notification (and a Telegram message, like reminders).
+  services.watch = createWatches({ store, read: (url, max) => services.web.read(url, max), notify: (title, body) => notify(title, body, 'reminder') });
+  setInterval(() => services.watch.tick().then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 10 * 60_000);
   setInterval(() => careTick(store, (reason) => services.sos.notify(reason)).then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 60_000);
   // The evening "I'm okay" email to caregivers, when switched on (Accessibility page).
   setInterval(() => services.sos.dailyTick({

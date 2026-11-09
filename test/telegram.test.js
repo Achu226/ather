@@ -12,27 +12,36 @@ const TOKEN = '123456:FAKE-token_for-tests';
 /** A fake Telegram Bot API: queued updates in, sent messages out. */
 function fakeTelegram({ valid = true } = {}) {
   const t = { queue: [], sent: [], offsets: [], valid, nextId: 1 };
+  t.voices = [];
   t.fetch = async (url, opts = {}) => {
+    const file = /\/file\/bot([^/]+)\/(.+)$/.exec(String(url));
+    if (file) return { ok: file[1] === TOKEN, status: file[1] === TOKEN ? 200 : 401, arrayBuffer: async () => new TextEncoder().encode(`audio of ${file[2]}`).buffer };
     const m = /\/bot([^/]+)\/(\w+)$/.exec(String(url));
     assert.ok(m, String(url));
     if (!t.valid || m[1] !== TOKEN) return { ok: false, status: 401, json: async () => ({ ok: false, description: 'Unauthorized' }) };
+    if (opts.body instanceof FormData) { // file uploads (sendVoice)
+      t.voices.push({ method: m[2], chat_id: Number(opts.body.get('chat_id')), size: opts.body.get('voice')?.size, type: opts.body.get('voice')?.type });
+      return { ok: true, json: async () => ({ ok: true, result: {} }) };
+    }
     const body = opts.body ? JSON.parse(opts.body) : {};
+    if (m[2] === 'getFile') return { ok: true, json: async () => ({ ok: true, result: { file_path: `voice/${body.file_id}.oga` } }) };
     if (m[2] === 'getMe') return { ok: true, json: async () => ({ ok: true, result: { username: 'maya_test_bot' } }) };
     if (m[2] === 'getUpdates') { t.offsets.push(body.offset); const result = t.queue.filter((u) => u.update_id >= (body.offset || 0)); t.queue = []; return { ok: true, json: async () => ({ ok: true, result }) }; }
     if (m[2] === 'sendMessage') { t.sent.push(body); return { ok: true, json: async () => ({ ok: true, result: {} }) }; }
     throw new Error(`unexpected ${m[2]}`);
   };
   t.say = (chatId, text, first_name = 'Rahul') => t.queue.push({ update_id: t.nextId++, message: { chat: { id: chatId }, from: { first_name }, text } });
+  t.voice = (chatId, fileId, first_name = 'Rahul') => t.queue.push({ update_id: t.nextId++, message: { chat: { id: chatId }, from: { first_name }, voice: { file_id: fileId, duration: 3 } } });
   return t;
 }
 const fakeSecrets = () => { const m = new Map(); return { get: (k) => m.get(k) ?? null, set: (k, v) => (v ? m.set(k, v) : m.delete(k)), map: m }; };
 
-async function setup({ answer = async (text) => `You said: ${text}` } = {}) {
+async function setup({ answer = async (text) => `You said: ${text}`, transcribe, speak } = {}) {
   const store = openStore(':memory:');
   const secrets = fakeSecrets();
   const tg = fakeTelegram();
   const asked = [];
-  const bot = createTelegram({ store, secrets, fetchFn: tg.fetch, answer: async (text, ctx) => { asked.push(text); return answer(text, ctx); } });
+  const bot = createTelegram({ store, secrets, fetchFn: tg.fetch, transcribe, speak, answer: async (text, ctx) => { asked.push(text); return answer(text, ctx); } });
   await bot.setToken(TOKEN);
   return { store, secrets, tg, asked, bot };
 }
@@ -122,6 +131,63 @@ test('caregivers join with a one-time code, get alerts only, and can be removed'
   bot.removeCaregiver(7);
   assert.deepEqual(bot.status().caregivers, []);
   assert.equal(await bot.alertCaregivers('nobody'), 0);
+});
+
+test('voice notes are transcribed and answered, by voice too after a voice note', async () => {
+  const heard = [];
+  const transcribe = async (bytes) => { heard.push(new TextDecoder().decode(bytes)); return heard.length === 2 ? '' : 'what is on my calendar today'; };
+  const speak = async (text) => ({ bytes: new TextEncoder().encode(`m4a of ${text}`), mime: 'audio/mp4' });
+  const { tg, asked, bot } = await setup({ transcribe, speak });
+  tg.say(5, bot.status().code);
+  await bot.pollOnce();
+  tg.voice(5, 'v1');
+  await bot.pollOnce();
+  assert.deepEqual(heard, ['audio of voice/v1.oga'], 'the voice file was downloaded from Telegram');
+  assert.deepEqual(asked, ['what is on my calendar today']);
+  assert.ok(tg.sent.some((m) => m.text === '🎙️ “what is on my calendar today”'), 'Maya says what she heard');
+  assert.equal(tg.sent.at(-1).text, 'You said: what is on my calendar today');
+  assert.deepEqual(tg.voices, [{ method: 'sendVoice', chat_id: 5, size: 'm4a of You said: what is on my calendar today'.length, type: 'audio/mp4' }]);
+  tg.voice(5, 'v2'); // silence
+  await bot.pollOnce();
+  assert.match(tg.sent.at(-1).text, /could not hear any words/i);
+  assert.equal(asked.length, 1);
+  tg.say(5, 'hello'); // typed: answered in text only (the default)
+  await bot.pollOnce();
+  assert.equal(tg.voices.length, 1);
+  bot.setVoiceReplies('always');
+  tg.say(5, 'hello again');
+  await bot.pollOnce();
+  assert.equal(tg.voices.length, 2, 'always: typed messages get a voice answer too');
+  bot.setVoiceReplies('never');
+  tg.voice(5, 'v3');
+  await bot.pollOnce();
+  assert.equal(tg.voices.length, 2, 'never: no voice answers');
+  assert.equal(bot.status().voiceReplies, 'never');
+  assert.throws(() => bot.setVoiceReplies('loud'), /voice/i);
+});
+
+test('voice notes from strangers are ignored and caregivers never reach the AI by voice', async () => {
+  const heard = [];
+  const { tg, asked, bot } = await setup({ transcribe: async () => { heard.push(1); return 'hi'; } });
+  tg.say(5, bot.status().code);
+  await bot.pollOnce();
+  tg.say(7, bot.status().caregiverCode, 'Priya');
+  await bot.pollOnce();
+  const before = tg.sent.length;
+  tg.voice(9, 'x', 'Stranger');
+  await bot.pollOnce();
+  assert.equal(tg.sent.length, before);
+  tg.voice(7, 'y', 'Priya');
+  await bot.pollOnce();
+  assert.match(tg.sent.at(-1).text, /only sends alerts/);
+  assert.equal(heard.length, 0, 'nothing was transcribed');
+  assert.equal(asked.length, 0);
+  const noEars = await setup(); // a Maya without speech recognition says so instead of failing silently
+  noEars.tg.say(5, noEars.bot.status().code);
+  await noEars.bot.pollOnce();
+  noEars.tg.voice(5, 'z');
+  await noEars.bot.pollOnce();
+  assert.match(noEars.tg.sent.at(-1).text, /type your message/i);
 });
 
 test('each message is handled once, long answers are split, and a revoked token stops polling', async () => {

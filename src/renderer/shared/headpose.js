@@ -35,6 +35,61 @@ export function createPointer({ speed = 1, smooth = 0.35, calibrate = 15 } = {})
   };
 }
 
+/** Extra face gestures (as in Project Gameface) and how to tell them from the face's blendshape scores. */
+export const FACE_GESTURES = [
+  ['browUp', 'Raise eyebrows', (s) => (s.browInnerUp ?? 0) > 0.5],
+  ['mouthLeft', 'Mouth to the left', (s) => (s.mouthLeft ?? 0) > 0.45],
+  ['mouthRight', 'Mouth to the right', (s) => (s.mouthRight ?? 0) > 0.45],
+  ['pucker', 'Pucker lips (kiss)', (s) => (s.mouthPucker ?? 0) > 0.6 && (s.jawOpen ?? 0) < 0.2],
+];
+/** What a gesture can do (services/pc.js faceAction carries them out). */
+export const FACE_ACTIONS = [['none', 'Nothing'], ['click', 'Click'], ['right', 'Right-click'], ['double', 'Double-click'],
+  ['scrollUp', 'Scroll up'], ['scrollDown', 'Scroll down'], ['enter', 'Enter'], ['escape', 'Esc'], ['tab', 'Tab']];
+
+/**
+ * The user's chosen face gestures → actions: each fires once per gesture held `hold` ms, at most once per `cooldown`.
+ * Gestures set to "none" (the default) are ignored, so ordinary expressions never act on their own.
+ */
+export function createFaceActions({ map = {}, hold = 300, cooldown = 800 } = {}) {
+  const used = FACE_GESTURES.filter(([k]) => map[k] && map[k] !== 'none');
+  const since = {}, fired = {};
+  let last = -Infinity;
+  return (s, t) => {
+    let action = null;
+    for (const [k, , on] of used) {
+      if (!on(s)) { since[k] = null; fired[k] = false; continue; }
+      since[k] ??= t;
+      if (!action && !fired[k] && t - since[k] >= hold && t - last >= cooldown) { fired[k] = true; last = t; action = map[k]; }
+    }
+    return action;
+  };
+}
+
+/**
+ * Glance (as in "look to speak"): a deliberate head turn left or right, held for `hold` ms, gives 'left' or 'right' once.
+ * Small moves (under `amp` from the calibrated straight-ahead) and quick twitches do nothing; the head must come back
+ * near the centre before the next glance counts.
+ */
+export function createGlance({ amp = 0.08, hold = 350, calibrate = 15 } = {}) {
+  let neutral = null, samples = [], side = null, since = 0, armed = true;
+  return (dir, t) => {
+    if (neutral === null) {
+      samples.push(dir.x);
+      if (samples.length >= calibrate) neutral = samples.reduce((a, b) => a + b, 0) / samples.length;
+      return null;
+    }
+    const d = dir.x - neutral;
+    if (Math.abs(d) < amp / 2) { armed = true; side = null; return null; }
+    // The camera image is mirrored: turning right moves the nose left in the picture.
+    const now = d <= -amp ? 'right' : d >= amp ? 'left' : null;
+    if (!now || !armed) { if (!now) side = null; return null; }
+    if (now !== side) { side = now; since = t; return null; }
+    if (t - since < hold) return null;
+    armed = false; side = null;
+    return now;
+  };
+}
+
 /**
  * Dwell click, for people who cannot open their mouth on purpose: hold the pointer still for `ms` and it clicks once.
  * It must move away (more than `radius` of the screen) before it can click again. progress 0..1 draws the ring.

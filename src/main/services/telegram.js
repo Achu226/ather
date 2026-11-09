@@ -16,8 +16,14 @@ export const splitMessage = (text) => {
 
 const newCode = () => String(randomInt(100000, 1000000));
 
-export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChange = () => {} }) {
-  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, caregivers: [], caregiverCode: '', ...store.getSetting('telegram', {}) });
+const VOICE_REPLIES = ['voice-notes', 'always', 'never'];
+
+/**
+ * transcribe(bytes) → text: a voice note from the phone, heard on this PC (Whisper).
+ * speak(text) → { bytes, mime } | null: Maya's answer as audio for a voice reply.
+ */
+export function createTelegram({ store, secrets, answer, transcribe = null, speak = null, fetchFn = fetch, onChange = () => {} }) {
+  const state = () => ({ ownerId: null, chat: '', code: '', bot: '', offset: 0, caregivers: [], caregiverCode: '', voiceReplies: 'voice-notes', ...store.getSetting('telegram', {}) });
   const save = (patch) => { store.setSetting('telegram', { ...state(), ...patch }); onChange(); };
   let running = false, error = null;
 
@@ -29,10 +35,24 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     return data.result;
   }
   const send = async (chatId, text) => { for (const part of splitMessage(text)) await call('sendMessage', { chat_id: chatId, text: part }); };
+  async function download(fileId) {
+    const { file_path: path } = await call('getFile', { file_id: fileId });
+    const res = await fetchFn(`https://api.telegram.org/file/bot${secrets.get('telegram-token')}/${path}`, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`Telegram file: error ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+  async function sendVoice(chatId, { bytes, mime }) {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('voice', new Blob([bytes], { type: mime }), mime === 'audio/mp4' ? 'maya.m4a' : 'maya.ogg');
+    const res = await fetchFn(`${API}${secrets.get('telegram-token')}/sendVoice`, { method: 'POST', body: form, signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`Telegram: voice reply failed (${res.status})`);
+  }
 
   async function handle(msg) {
-    const chatId = msg.chat?.id, text = String(msg.text || '').trim();
-    if (!chatId || !text) return;
+    const chatId = msg.chat?.id, voiceId = msg.voice?.file_id || msg.audio?.file_id;
+    let text = String(msg.text || '').trim();
+    if (!chatId || (!text && !voiceId)) return;
     const s = state();
     const who = s.chat || 'the Maya user';
     // Caregivers get alerts only: their messages never reach the AI or the user's data.
@@ -50,6 +70,14 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
       return send(chatId, '✅ Paired! I am Maya. Ask me anything, or tell me to add a task, a reminder or a note. Things that need your OK (mouse and keyboard, sending mail) must be approved on the PC.');
     }
     if (chatId !== s.ownerId) return; // strangers get nothing, not even a hint that the bot works
+    // A voice note: heard on this PC (nothing goes to a cloud), then answered like typed text.
+    if (!text && voiceId) {
+      if (!transcribe) return send(chatId, 'Voice notes do not work on this Maya yet: please type your message.');
+      text = String(await transcribe(await download(voiceId)) || '').trim();
+      if (!text) return send(chatId, 'Sorry, I could not hear any words in that voice note. Please try again a little closer to the phone.');
+      await send(chatId, `🎙️ “${text}”`);
+    }
+    const byVoice = s.voiceReplies === 'always' || (s.voiceReplies === 'voice-notes' && !!voiceId);
     const refused = [];
     let reply;
     try {
@@ -57,6 +85,10 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     } catch (e) { reply = `Sorry, that did not work: ${e.message}`; }
     if (refused.length) reply += `\n\n🔒 For safety, approve ${[...new Set(refused)].map((n) => n.replace(/_/g, ' ')).join(', ')} on the PC.`;
     await send(chatId, reply);
+    if (byVoice && speak) {
+      const audio = await speak(reply).catch(() => null); // the text answer above is already there if this fails
+      if (audio) await sendVoice(chatId, audio).catch(() => {});
+    }
   }
 
   /** One round of long polling: handles every new message once; false when Telegram could not be reached. */
@@ -82,7 +114,12 @@ export function createTelegram({ store, secrets, answer, fetchFn = fetch, onChan
     status: () => {
       const s = state();
       return { configured: !!secrets.get('telegram-token'), bot: s.bot, paired: !!s.ownerId, chat: s.chat, code: s.ownerId ? '' : s.code,
-        caregivers: s.caregivers, caregiverCode: s.caregiverCode, running, error };
+        caregivers: s.caregivers, caregiverCode: s.caregiverCode, voiceReplies: s.voiceReplies, running, error };
+    },
+    /** When Maya answers on Telegram by voice too: 'voice-notes' (after you send one), 'always' or 'never'. */
+    setVoiceReplies(mode) {
+      if (!VOICE_REPLIES.includes(mode)) throw new Error(`Voice replies must be one of: ${VOICE_REPLIES.join(', ')}`);
+      save({ voiceReplies: mode });
     },
     /** Sends an alert (SOS, missed medicine, daily update) to every caregiver; the number reached. Never throws. */
     async alertCaregivers(text) {

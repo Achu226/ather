@@ -180,7 +180,7 @@ export function createWindows({ onQuit, onTray }) {
       backgroundColor: '#00000000', webPreferences: { preload, contextIsolation: true, sandbox: false, backgroundThrottling: false },
     });
     headWin.setAlwaysOnTop(true, 'screen-saver');
-    headWin.loadFile(page('headmouse'), { query: { speed: String(opts.speed || 1), dwell: String(opts.dwell || 0), blink: opts.blink ? '1' : '0' } });
+    headWin.loadFile(page('headmouse'), { query: { speed: String(opts.speed || 1), dwell: String(opts.dwell || 0), blink: opts.blink ? '1' : '0', faces: JSON.stringify(opts.faces || {}) } });
     headWin.on('closed', () => { headWin = null; });
   }
 
@@ -275,5 +275,6 @@ export function createWindows({ onQuit, onTray }) {
     toNotch: (channel, ...args) => send(notch, channel, ...args),
     toApp: (channel, ...args) => send(appWin, channel, ...args),
     broadcast: (channel, ...args) => { send(notch, channel, ...args); send(appWin, channel, ...args); },
+    toHeadMouse: (channel, ...args) => send(headWin, channel, ...args),
   };
 }

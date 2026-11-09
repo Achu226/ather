@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { headDirection, createPointer, createGestures, createDwell } from '../src/renderer/shared/headpose.js';
+import { headDirection, createPointer, createGestures, createDwell, createGlance, createFaceActions, FACE_GESTURES } from '../src/renderer/shared/headpose.js';
 
 /** A fake face: eyes at y 0.4, forehead 0.2, chin 0.8, nose shifted by (dx, dy). */
 const face = (dx = 0, dy = 0) => {
@@ -9,6 +9,44 @@ const face = (dx = 0, dy = 0) => {
   lm[1] = { x: 0.5 + dx, y: 0.5 + dy };
   return lm;
 };
+
+test('glance: a held turn left or right fires once, small or quick moves do not, and it re-arms at the centre', () => {
+  const g = createGlance({ calibrate: 3, hold: 300 });
+  let t = 0;
+  const at = (dx, ms = 50) => { t += ms; return g(headDirection(face(dx)), t); };
+  for (let i = 0; i < 3; i++) assert.equal(at(0), null, 'calibrating');
+  assert.equal(at(-0.003), null, 'a small move is not a glance');
+  assert.equal(at(-0.012), null, 'just started turning');
+  assert.equal(at(0), null, 'a quick twitch back');
+  assert.equal(at(-0.012), null);
+  assert.equal(at(-0.012, 200), null);
+  assert.equal(at(-0.012, 200), 'right', 'held for 300 ms: the user turned right (mirrored camera)');
+  assert.equal(at(-0.012, 400), null, 'fires once, not again while still turned');
+  assert.equal(at(0.012, 400), null, 'must come back to the centre first');
+  assert.equal(at(0), null);
+  assert.equal(at(0.012), null);
+  assert.equal(at(0.012, 400), 'left');
+});
+
+test('face gestures: only the ones the user chose act, once per hold, with a pause between', () => {
+  assert.deepEqual(FACE_GESTURES.map(([k]) => k), ['browUp', 'mouthLeft', 'mouthRight', 'pucker']);
+  const act = createFaceActions({ map: { browUp: 'scrollUp', pucker: 'enter', mouthLeft: 'none' }, hold: 200, cooldown: 500 });
+  const brows = { browInnerUp: 0.8 }, pucker = { mouthPucker: 0.8, jawOpen: 0.05 }, left = { mouthLeft: 0.9 };
+  assert.equal(act(brows, 0), null, 'just started');
+  assert.equal(act(brows, 250), 'scrollUp', 'held long enough');
+  assert.equal(act(brows, 600), null, 'once per raise, not repeating');
+  assert.equal(act({}, 650), null);
+  assert.equal(act(left, 700), null);
+  assert.equal(act(left, 1000), null, 'mouth left is set to "none"');
+  assert.equal(act(pucker, 1100), null);
+  assert.equal(act(pucker, 1400), 'enter');
+  assert.equal(act({}, 1450), null);
+  assert.equal(act(brows, 1500), null);
+  assert.equal(act(brows, 1750), null, 'held, but only 350 ms since the last action (Enter at 1400)');
+  assert.equal(act(brows, 1950), 'scrollUp', '550 ms after the last action');
+  assert.equal(act({ mouthPucker: 0.8, jawOpen: 0.5 }, 3000), null, 'an open mouth (a click) is not a pucker');
+  assert.equal(createFaceActions({ map: {} })({ browInnerUp: 1 }, 5000), null, 'nothing chosen: nothing happens');
+});
 
 test('head direction is measured from between the eyes', () => {
   const d = headDirection(face(0.01, 0));

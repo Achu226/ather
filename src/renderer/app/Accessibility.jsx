@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSetting } from './Settings.jsx';
+import { FACE_GESTURES, FACE_ACTIONS } from '../shared/headpose.js';
 
 const A11Y_DEFAULTS = { dwell: 0, switchKey: 'F9', scanMs: 1200, keyboardLayout: 'en', keyboardSize: 1 };
 const SOS_DEFAULTS = { contacts: [], phones: [], shareLocation: false, daily: { on: false, time: '20:00' }, name: '', note: '', checkin: { on: false, camera: false, hours: 3, from: '08:00', to: '22:00' }, medical: {} };
@@ -112,6 +113,19 @@ export default function Accessibility() {
             Blink to click: close both eyes for half a second to click, 1.5 seconds to right-click (normal blinks are ignored)</label>
           {a.dwell > 0 && <label className="field">Hold still for {(a.dwell / 1000).toFixed(1)} s
             <input type="range" min="500" max="3000" step="100" value={a.dwell} onChange={(e) => setA({ dwell: Number(e.target.value) })} onMouseUp={restartHeadMouse} aria-label="Dwell time" /></label>}
+          <details className="field">
+            <summary>😉 Face gestures: more actions without your hands</summary>
+            <p className="muted">Hold the face for a moment to act. Leave a gesture on “Nothing” if it happens by accident.</p>
+            <div className="medical-grid">
+              {FACE_GESTURES.map(([k, label]) => (
+                <div className="field" key={k}><label htmlFor={`fg-${k}`}>{label}</label>
+                  <select id={`fg-${k}`} className="input" value={a.faceActions?.[k] || 'none'}
+                    onChange={(e) => { setA({ faceActions: { ...a.faceActions, [k]: e.target.value } }); setTimeout(restartHeadMouse, 300); }}>
+                    {FACE_ACTIONS.map(([v, name]) => <option key={v} value={v}>{name}</option>)}
+                  </select></div>
+              ))}
+            </div>
+          </details>
         </section>
 
         <section className="panel" aria-labelledby="a11y-kb">
@@ -142,6 +156,19 @@ export default function Accessibility() {
             <label className="field" style={{ flex: 1 }}>Speed: {(a.scanMs / 1000).toFixed(1)} s each
               <input type="range" min="600" max="3000" step="100" value={a.scanMs} onChange={(e) => setA({ scanMs: Number(e.target.value) })} aria-label="Scanning speed" /></label>
           </div>
+          <div className="row wrap">
+            <div className="field" style={{ flex: 2 }}><label htmlFor="sw-n">👄 Mouth sound as the switch (a lip pop or tongue click)</label>
+              <select id="sw-n" className="input" value={a.noiseSwitch || 'off'} onChange={(e) => setA({ noiseSwitch: e.target.value })}>
+                <option value="off">Off</option>
+                <option value="scan">Switch (scan, then select)</option>
+                <option value="click">Click at the pointer</option>
+              </select></div>
+            <div className="field" style={{ flex: 1 }}><label htmlFor="sw-ns">Sensitivity</label>
+              <select id="sw-ns" className="input" value={a.noiseSensitivity || 'normal'} onChange={(e) => setA({ noiseSensitivity: e.target.value })} disabled={(a.noiseSwitch || 'off') === 'off'}>
+                <option value="low">Low (noisy room)</option><option value="normal">Normal</option><option value="high">High (quiet pops)</option>
+              </select></div>
+          </div>
+          {(a.noiseSwitch || 'off') !== 'off' && <p className="muted">Talking, coughing and music are ignored: only a short, sharp sound after a moment of quiet counts. The microphone sound stays on this PC.</p>}
         </section>
 
         <section className="panel sos-panel" aria-labelledby="a11y-sos">

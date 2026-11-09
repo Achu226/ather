@@ -25,7 +25,7 @@ import { careDone } from './services/scheduler.js';
 import { fixHeard, learnWord, wordFixes, saveFeedback, reflect } from './services/learning.js';
 import { learnSkill, saveSkill } from './services/skills.js';
 import { workToday } from './services/worklog.js';
-import { chromeProfiles } from './services/pc.js';
+import { chromeProfiles, faceAction } from './services/pc.js';
 import { finishDictation } from './services/dictate.js';
 import { interpretTurn } from './services/interpreter.js';
 import { pasteText, pasteClip } from './dictation.js';
@@ -172,6 +172,14 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
     services.lastVoice = Date.now();
     return services.voiceControl.run(c);
   });
+  // Mouth-noise switch (Accessibility page): a pop selects while scanning; otherwise it starts scanning or clicks.
+  handle('noise:press', () => {
+    if (lock.locked) return { ignored: 'locked' };
+    const how = store.getSetting('a11y', {}).noiseSwitch || 'off';
+    if (how === 'off') return { ignored: 'off' };
+    if (services.voiceControl.mode === 'scan') return services.voiceControl.press();
+    return how === 'click' ? services.pc.clickHere('left') : services.voiceControl.run({ cmd: 'scan', on: true });
+  });
   ipcMain.handle('sos:trigger', (_, reason) => services.sos.trigger(reason || 'pressed the help button'));
   ipcMain.handle('sos:cancel', () => services.sos.cancel());
   ipcMain.handle('sos:stop', () => services.sos.stopAlarm());
@@ -187,6 +195,7 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('telegram:setToken', async (token) => { const s = await services.telegram.setToken(token); services.telegram.start(); return s; });
   handle('telegram:forget', () => { services.telegram.forget(); return services.telegram.status(); });
   handle('telegram:removeCaregiver', (id) => { services.telegram.removeCaregiver(id); return services.telegram.status(); });
+  handle('telegram:voiceReplies', (mode) => { services.telegram.setVoiceReplies(mode); return services.telegram.status(); });
   ipcMain.on('voice:heard', () => { services.lastVoice = Date.now(); });
   handle('headmouse:set', (on) => services.headMouse.set(on));
   handle('headmouse:model', async () => readFileSync(await downloadFile('facemesh')));
@@ -352,6 +361,10 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
   handle('chrome:profiles', () => chromeProfiles());
   // Nod / shake in the head mouse answers the oldest open approval card (in the face window or the app).
   handle('headmouse:gesture', (g) => { windows.broadcast('approval:gesture', g === 'yes'); return true; });
+  // Speak for me: glances go to the board; the board asks the head mouse to hold the cursor still meanwhile.
+  handle('headmouse:action', (action) => faceAction(services.pc, action));
+  handle('headmouse:glance', (side) => { windows.broadcast('head:glance', side === 'left' ? 'left' : 'right'); return true; });
+  handle('headmouse:hold', (on) => { windows.toHeadMouse('headmouse:hold', !!on); return windows.headMouseOpen; });
   handle('transcribe:quick', (audio) => ml.call('transcribeQuick', audio));
   handle('dictation:result', async (audio) => {
     const heard = fixHeard(store, await ml.call('transcribe', audio, listenLanguage()));

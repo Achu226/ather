@@ -30,6 +30,32 @@ export const firstVideoId = (html) => /"videoId":"([\w-]{11})"/.exec(html)?.[1] 
 
 export const everydayTools = [
   {
+    name: 'watch_add',
+    description: 'Watch a web page and tell the user (desktop notification and Telegram) when it changes: exam results, a notice, a price. '
+      + 'Needs the full address. The first check only remembers the page. Pages with clocks or ads may change every time; say so if it alerts too often.',
+    parameters: obj({ url: str('Full address, starting with https://'), what: str('Short name, e.g. "Exam results"'),
+      every_hours: { type: 'integer', description: 'How often to check, in hours (default 6)' } }, ['url', 'what']),
+    run: ({ url, what, every_hours }, { services }) => ({ watching: services.watch.add({ url, what, every_hours }), note: 'First check within 10 minutes.' }),
+  },
+  {
+    name: 'watch_list',
+    description: 'The web pages Maya is watching for changes, with when each was last checked.',
+    parameters: obj({}),
+    run: (_, { services }) => services.watch.list(),
+  },
+  {
+    name: 'watch_remove',
+    description: 'Stop watching a web page. which: its id, address or name.',
+    parameters: obj({ which: str('Id, address or name of the watch') }, ['which']),
+    run: ({ which }, { services }) => {
+      const q = String(which).toLowerCase();
+      const w = services.watch.list().find((x) => x.id === String(which) || x.url.toLowerCase() === q || x.what.toLowerCase().includes(q) || q.includes(x.what.toLowerCase()));
+      if (!w) return { error: `No watched page matches "${which}".`, watching: services.watch.list().map((x) => x.what) };
+      services.watch.remove(w.id);
+      return { stopped: w.what };
+    },
+  },
+  {
     name: 'places_accessible',
     description: 'Find wheelchair-accessible places near a town or area (hospital, pharmacy, accessible toilets, restaurant…) from OpenStreetMap. '
       + 'Accessible ones come first. Read out the top 3 with distance and access; say "unknown" places should be called first.',

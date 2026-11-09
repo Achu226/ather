@@ -11,6 +11,10 @@ import { listenOnce, watchForInterrupt, isStopPhrase, matchWake, greeting, nextS
 import { detectEmotion, afterFeeling } from './shared/emotion.js';
 import { parseCommand, parseYesNo } from './shared/voicecommands.js';
 import { workMood } from './shared/work.js';
+import { startNoiseSwitch } from './shared/noiseswitch.js';
+import { installVoiceHelpers } from './shared/voicenotes.js';
+
+installVoiceHelpers(); // Telegram voice notes are decoded / voice replies recorded here (always open, never throttled)
 import './shared/base.css';
 import './notch.css';
 
@@ -249,6 +253,21 @@ function Notch() {
     })();
     return () => controller.abort();
   }, [wakeOn, voiceMode, recording, locked]);
+
+  // ---- mouth-noise switch (Accessibility page): a lip pop or tongue click presses the switch ----
+  const [noise, setNoise] = useState({ how: 'off', sensitivity: 'normal' });
+  useEffect(() => {
+    const read = (a) => setNoise({ how: a?.noiseSwitch || 'off', sensitivity: a?.noiseSensitivity || 'normal' });
+    ather.getSetting('a11y', {}).then(read);
+    return ather.onSettingsChanged((key, value) => key === 'a11y' && read(value));
+  }, []);
+  useEffect(() => {
+    if (noise.how === 'off') return undefined;
+    let stop = null, cancelled = false;
+    startNoiseSwitch({ sensitivity: noise.sensitivity, onPress: () => { ather.noisePress().catch(() => {}); flash('nod', 400); } })
+      .then((s) => { if (cancelled) s(); else stop = s; }).catch(() => {});
+    return () => { cancelled = true; stop?.(); };
+  }, [noise.how, noise.sensitivity]);
 
   // ---- approvals by voice: someone who can only speak cannot click Allow ----
   const wakeRef = useRef(false);

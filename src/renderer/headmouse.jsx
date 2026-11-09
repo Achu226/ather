@@ -5,12 +5,13 @@ import { useEffect, useRef, useState } from 'react';
 import { FaceLandmarker } from '@mediapipe/tasks-vision';
 import wasmLoader from '../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.js?url';
 import wasmBinary from '../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm?url';
-import { headDirection, createPointer, createGestures, createDwell, createBlink, createHeadGesture } from './shared/headpose.js';
+import { headDirection, createPointer, createGestures, createDwell, createBlink, createHeadGesture, createGlance, createFaceActions } from './shared/headpose.js';
 
 const query = new URLSearchParams(location.search);
 const speed = Number(query.get('speed')) || 1;
 const dwellMs = Number(query.get('dwell')) || 0; // 0 = dwell click off
 const blinkOn = query.get('blink') === '1';
+const faceMap = (() => { try { return JSON.parse(query.get('faces') || '{}'); } catch { return {}; } })(); // Accessibility page choices
 
 function HeadMouse() {
   const video = useRef(null);
@@ -20,6 +21,9 @@ function HeadMouse() {
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   pausedRef.current = paused;
+  // "Speak for me" look mode: the cursor stays still (no moves, no clicks) and only left/right glances are sent.
+  const holdRef = useRef(false);
+  useEffect(() => window.ather.onHeadMouseHold?.((on) => { holdRef.current = !!on; }), []);
 
   useEffect(() => {
     let stop = false, stream, landmarker;
@@ -27,6 +31,8 @@ function HeadMouse() {
     const dwell = dwellMs ? createDwell({ ms: dwellMs }) : null;
     const blink = blinkOn ? createBlink() : null;
     const nod = createHeadGesture(); // nod = yes, shake = no on an approval card
+    const glance = createGlance(); // look left / look right on the Speak for me board
+    const faceActions = createFaceActions({ map: faceMap }); // eyebrows, mouth left/right, pucker → the chosen action
     let lastRing = 0;
     (async () => {
       try {
@@ -50,7 +56,14 @@ function HeadMouse() {
             const r = landmarker.detectForVideo(v, now);
             const lm = r.faceLandmarks?.[0];
             if (!lm) { setState(''); setStatus('No face found: sit in front of the camera.'); }
+            else if (!pausedRef.current && holdRef.current) {
+              const side = glance(headDirection(lm), now);
+              if (side) window.ather.headMouseGlance(side);
+              setState('on');
+              setStatus('Look left or right to choose');
+            }
             else if (!pausedRef.current) {
+              glance(headDirection(lm), now); // keeps its calibration current
               const scores = Object.fromEntries((r.faceBlendshapes?.[0]?.categories || []).map((c) => [c.categoryName, c.score]));
               const g = gestures(scores, now);
               const b = blink?.(scores, now);
@@ -66,6 +79,8 @@ function HeadMouse() {
                 if (ring !== lastRing) { lastRing = ring; window.ather.headMouseDwell(ring < 1 ? ring : 0); }
                 if (d?.click) { window.ather.headMouseClick('left'); setState('click'); setTimeout(() => setState('on'), 300); }
               }
+              const fa = g.click ? null : faceActions(scores, now);
+              if (fa) { window.ather.headMouseAction(fa).catch(() => {}); setState('click'); setTimeout(() => setState('on'), 300); }
               if (g.click) { window.ather.headMouseClick(g.click); setState('click'); setTimeout(() => setState('on'), 300); }
               else setState((s) => (s === 'click' ? s : 'on'));
               setStatus(pointer.current.calibrating ? 'Look at the screen centre…' : (dwellMs ? 'Turn your head to move · hold still to click · smile = right-click' : 'Turn your head to move · open mouth = click · smile = right-click'));

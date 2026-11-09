@@ -19,6 +19,7 @@ import Models from './app/Models.jsx';
 import Mcp from './app/Mcp.jsx';
 import Workflows from './app/Workflows.jsx';
 import Accessibility from './app/Accessibility.jsx';
+import Speak from './app/Speak.jsx';
 import Skills from './app/Skills.jsx';
 import Monitor from './app/Monitor.jsx';
 import Agent from './app/Agent.jsx';
@@ -33,6 +34,7 @@ const SECTIONS = [
   ['home', 'Home', '🏠', Home],
   ['chat', 'Chat', '💬', Chat],
   ['accessibility', 'Accessibility', '♿', Accessibility],
+  ['speak', 'Speak for me', '🗣️', Speak],
   ['brain', 'Brain', '🧠', Brain],
   ['agent', 'My Maya', '🤖', Agent],
   ['connections', 'Connections', '🔗', Connections],

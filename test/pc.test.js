@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchApp, describeWindow, createPc } from '../src/main/services/pc.js';
+import { matchApp, describeWindow, createPc, faceAction } from '../src/main/services/pc.js';
+
+test('a face gesture action becomes the right click, scroll or key', async () => {
+  const done = [];
+  const pc = { clickHere: async (b) => done.push(`click ${b}`), scroll: async (n) => done.push(`scroll ${n}`), keys: async (k) => done.push(`keys ${k}`) };
+  for (const a of ['click', 'right', 'double', 'scrollUp', 'scrollDown', 'enter', 'escape', 'tab']) await faceAction(pc, a);
+  assert.deepEqual(done, ['click left', 'click right', 'click left', 'click left', 'scroll 360', 'scroll -360', 'keys {ENTER}', 'keys {ESC}', 'keys {TAB}']);
+  await assert.rejects(faceAction(pc, 'format c:'), /Unknown face action/);
+});
 
 test('finds the right Start Menu app from a spoken name', () => {
   const names = ['Visual Studio Code', 'Google Chrome', 'Uninstall Google Chrome', 'Microsoft Edge', 'Word', 'Spotify', 'Python 3.14 (64-bit)'];
