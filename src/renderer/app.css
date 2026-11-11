@@ -306,3 +306,8 @@ body { zoom: var(--ui-zoom, 1); }
   background: color-mix(in srgb, var(--accent) 13%, var(--card)); }
 .quick-btn.sos .quick-icon { background: color-mix(in srgb, var(--bad) 15%, var(--card)); }
 .stat { color: var(--accent-ink); }
+
+/* Brain server (AI models page) */
+.brain-server h3 { margin: 16px 0 6px; font-size: 15px; }
+.brain-server .addresses { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 8px; }
+.brain-server .warn-note { color: var(--warn-ink); background: var(--warn-soft); padding: 8px 12px; border-radius: var(--radius); }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import ModelList from './ModelList.jsx';
+import BrainServer from './BrainServer.jsx';
 import { useData } from './useData.js';
 
 const errText = (e) => e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -86,6 +87,8 @@ export default function Models({ version }) {
         </div>
         <p className="muted">Then paste its API key above and press Test connection.</p>
       </form>
+
+      <BrainServer />
 
       <div className="panel">
         <h2>Which model answers</h2>

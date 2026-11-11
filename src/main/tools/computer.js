@@ -61,7 +61,7 @@ const controlList = (elements) => elements.map((e) => `${e.i} ${e.type}${e.passw
 
 /** After an action: wait for the screen to settle, then report what the window shows now (Maya "looks back"). */
 async function lookAgain(pc) {
-  await new Promise((r) => setTimeout(r, 700));
+  await new Promise((r) => setTimeout(r, 300));
   const fg = await pc.foreground();
   const elements = await pc.elements();
   return { window_now: fg.title, controls_now: controlList(elements).slice(0, 2500) || 'No named controls; use computer_look for a picture.' };
@@ -196,9 +196,16 @@ export const computerTools = [
     parameters: obj({ app: str('App name') }, ['app']),
     run: async ({ app }, ctx) => {
       // Opening an app needs no permission (same as pc_open_app); only acting inside it does.
+      const before = await ctx.services.pc.foreground().catch(() => null);
       const r = await ctx.services.pc.openApp(app);
-      await new Promise((res) => setTimeout(res, 2500));
-      const fg = await ctx.services.pc.foreground();
+      // Wait until the new window is in front (up to 4 s) instead of a fixed 2.5 s.
+      let fg = before;
+      for (let t = 0; t < 4000 && (!fg || fg.hwnd === before?.hwnd); t += 250) {
+        await new Promise((res) => setTimeout(res, 250));
+        fg = await ctx.services.pc.foreground().catch(() => fg);
+      }
+      await new Promise((res) => setTimeout(res, 300)); // let it draw its controls
+      fg = await ctx.services.pc.foreground();
       ctx.services.computer.noteForeground(fg);
       ctx.services.computer.setTarget(fg);
       ctx.services.computer.record('open', app);

@@ -7,6 +7,7 @@ import { ask, complete, updateSummary, followUps } from './brain.js';
 import { requestApproval } from './approvals.js';
 import { weather } from './services/briefing.js';
 import { PROVIDER_PRESETS } from './providers.js';
+import { probeOllama } from './services/brainserver.js';
 import { approvedFolders } from './services/mcp-presets.js';
 import { basename } from 'node:path';
 import { availableModes, MODES, LITE, isLite } from './models.js';
@@ -16,7 +17,7 @@ import { toSendKeys } from './tools/computer.js';
 import { speakReply } from './speech.js';
 import { allPersonalities, KOKORO_VOICES } from './personality.js';
 import { imagesDir } from './paths.js';
-import { ensureOllama, hasModel, pullModel, ensureBrainModel } from './ollama.js';
+import { ensureOllama, hasModel, pullModel, ensureBrainModel, setOllamaHost, OLLAMA } from './ollama.js';
 import { BRAIN_MODEL, BASE_MODEL } from './brain.js';
 import { ollamaModels, hfModels, fileModels, hfInstalled, fileInstalled, downloadFile } from './ml/catalog.js';
 import { systemCheck } from './services/syscheck.js';
@@ -263,6 +264,18 @@ export function registerIpc({ store, ml, services, secrets, windows, mcp, theme,
 
   // ---------- model providers (Ollama, LM Studio, cloud) ----------
   const providers = services.providers;
+  // Brain server: which Ollama Maya thinks on ('' = this PC), and sharing this PC's with the user's laptop.
+  handle('browser:show', () => services.browser.show());
+  handle('brain:server', () => ({ host: store.getSetting('brainServer', ''), url: OLLAMA }));
+  handle('brain:serverTest', (host) => probeOllama(host));
+  handle('brain:serverSet', async (host = '') => {
+    host = String(host).trim();
+    if (host) { const r = await probeOllama(host); if (!r.ok) return r; }
+    store.setSetting('brainServer', host);
+    return { ok: true, url: setOllamaHost(host) };
+  });
+  handle('brain:share', () => services.brainShare.status());
+  handle('brain:shareSet', (on) => services.brainShare.set(!!on));
   handle('providers:list', () => providers.list());
   handle('providers:presets', () => PROVIDER_PRESETS);
   handle('providers:save', (id, patch, apiKey) => providers.save(id, patch, apiKey));

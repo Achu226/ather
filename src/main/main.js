@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { openStore, now } from './store.js';
 import { createTelegram } from './services/telegram.js';
 import { createWatches } from './services/watch.js';
+import { createBrowser } from './services/browser.js';
 import { speakReply } from './speech.js';
 import { fixHeard } from './services/learning.js';
 import { createMl } from './ml/client.js';
@@ -45,7 +46,9 @@ import { createSecrets } from './secrets.js';
 import { createWindows } from './windows.js';
 import { registerIpc } from './ipc.js';
 import { allTools } from './tools/index.js';
-import { ensureOllama, ensureBrainModel, hasModel, pullModel } from './ollama.js';
+import { ensureOllama, ensureBrainModel, hasModel, pullModel, setOllamaHost } from './ollama.js';
+import { createBrainShare, probeOllama } from './services/brainserver.js';
+import { execFile } from 'node:child_process';
 import { systemCheck } from './services/syscheck.js';
 import os from 'node:os';
 import { BRAIN_MODEL, BASE_MODEL, complete, ask } from './brain.js';
@@ -379,6 +382,7 @@ app.whenReady().then(async () => {
   };
   startScheduler(store, notify);
   // Watched web pages: checked when due; a change is a notification (and a Telegram message, like reminders).
+  services.browser = createBrowser({ BrowserWindow, icon });
   services.watch = createWatches({ store, read: (url, max) => services.web.read(url, max), notify: (title, body) => notify(title, body, 'reminder') });
   setInterval(() => services.watch.tick().then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 10 * 60_000);
   setInterval(() => careTick(store, (reason) => services.sos.notify(reason)).then((n) => n && windows.broadcast('data:changed')).catch(() => {}), 60_000);
@@ -421,7 +425,20 @@ app.whenReady().then(async () => {
   setInterval(() => checkFollowUps({ store, mail: services.mail, notify }).catch(() => {}), 30 * 60_000);
   setInterval(() => weeklyTick({ store, files: services.files, notify }).catch(() => {}), 10 * 60_000);
 
-  ensureOllama().then(async (up) => {
+  // Brain server: think on another PC's Ollama when the user chose one; if it can't be reached, this PC's own.
+  services.brainShare = createBrainShare({
+    restart: async () => {
+      for (const exe of ['ollama app.exe', 'ollama.exe']) await new Promise((r) => execFile('taskkill.exe', ['/IM', exe, '/F'], { windowsHide: true }, () => r()));
+      await new Promise((r) => setTimeout(r, 1000));
+      await ensureOllama();
+    },
+  });
+  const brainServer = store.getSetting('brainServer', '');
+  (brainServer ? probeOllama(brainServer) : Promise.resolve({ ok: true })).then(async (remote) => {
+    if (brainServer && remote.ok) setOllamaHost(brainServer);
+    else if (brainServer) notify('Brain server not reachable', `Maya is using this computer's own AI for now. ${remote.error || ''}`.trim(), 'brain');
+    return ensureOllama();
+  }).then(async (up) => {
     if (!up) return;
     if (!isLite() && await onlySmallBrain()) store.setSetting('liteBrain', true);
     await services.useLite(store.getSetting('liteBrain', isLite()));

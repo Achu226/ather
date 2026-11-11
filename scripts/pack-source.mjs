@@ -48,7 +48,7 @@ const MODULES = [
   ['10. Helpers', 'Memory, web, smart search, screen snip, clipboard history, live captions, health breaks, extras.',
     ['src/main/tools/assistant.js', 'src/main/tools/extras.js', 'src/main/services/web.js', 'src/main/services/search.js', 'src/main/services/clipboard.js',
       'src/main/services/health.js', 'src/renderer/app/Search.jsx', 'src/renderer/snip.html', 'src/renderer/snip.jsx', 'src/renderer/captions.html', 'src/renderer/captions.jsx',
-      'src/main/tools/everyday.js', 'src/main/services/places.js', 'src/main/services/watch.js', 'src/main/services/timers.js', 'src/renderer/prompter.html', 'src/renderer/prompter.jsx', 'src/renderer/shared/prompter.js',
+      'src/main/tools/everyday.js', 'src/main/services/places.js', 'src/main/services/watch.js', 'src/main/services/browser.js', 'src/main/tools/browser.js', 'src/main/services/brainserver.js', 'src/renderer/app/BrainServer.jsx', 'src/main/services/timers.js', 'src/renderer/prompter.html', 'src/renderer/prompter.jsx', 'src/renderer/shared/prompter.js',
       'src/renderer/camera.html', 'src/renderer/camera.js', 'src/main/services/interpreter.js', 'src/main/tools/people.js']],
   ['11. Data, security and settings', 'SQLite storage, encrypted secrets, PIN lock, backup, theme.',
     ['src/main/paths.js', 'src/main/store.js', 'src/main/secrets.js', 'src/main/security.js', 'src/main/backup.js', 'src/main/theme.js',

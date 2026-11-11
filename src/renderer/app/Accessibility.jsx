@@ -106,7 +106,7 @@ export default function Accessibility() {
             <button className="btn" onClick={() => window.ather.headMouseSet(false)}>Turn off</button>
           </div>
           <label className="field">Speed: {headSpeed}×
-            <input type="range" min="0.5" max="2" step="0.1" value={headSpeed} onChange={(e) => setHeadSpeed(Number(e.target.value))} onMouseUp={restartHeadMouse} aria-label="Head mouse speed" /></label>
+            <input type="range" min="0.5" max="3" step="0.1" value={headSpeed} onChange={(e) => setHeadSpeed(Number(e.target.value))} onMouseUp={restartHeadMouse} aria-label="Head mouse speed" /></label>
           <label className="row field"><input type="checkbox" className="check" checked={a.dwell > 0} onChange={(e) => setA({ dwell: e.target.checked ? 1000 : 0 })} />
             Dwell click: hold the pointer still to click (no mouth movement needed)</label>
           <label className="row field"><input type="checkbox" className="check" checked={!!a.blink} onChange={(e) => { setA({ blink: e.target.checked }); setTimeout(restartHeadMouse, 300); }} />

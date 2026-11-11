@@ -4,7 +4,7 @@ import { OLLAMA } from './ollama.js';
 import { now } from './store.js';
 
 export const PROVIDER_PRESETS = {
-  ollama: { name: 'Ollama', baseUrl: `${OLLAMA}/v1`, local: true, keyless: true },
+  ollama: { name: 'Ollama', get baseUrl() { return `${OLLAMA}/v1`; }, local: true, keyless: true }, // follows the brain server
   lmstudio: { name: 'LM Studio', baseUrl: 'http://127.0.0.1:1234/v1', local: true, keyless: true },
   openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', local: false },
   groq: { name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', local: false },

@@ -14,8 +14,11 @@ export function headDirection(lm) {
 /**
  * Turns head directions into a smooth cursor position (0..1 of the screen).
  * The first `calibrate` frames set "straight ahead" = screen centre. speed 1 = normal.
+ * Smoothing adapts (like the One Euro filter): tiny moves (head tremor) are smoothed hard, so the cursor stays still;
+ * big moves follow almost at once, so it never lags. A fixed `smooth` (0..1) turns that off.
  */
-export function createPointer({ speed = 1, smooth = 0.35, calibrate = 15 } = {}) {
+const adaptive = (d) => Math.min(0.85, 0.15 + d * 10);
+export function createPointer({ speed = 1, smooth = null, calibrate = 15 } = {}) {
   let neutral = null, samples = [], pos = { x: 0.5, y: 0.5 };
   return {
     recenter() { neutral = null; samples = []; pos = { x: 0.5, y: 0.5 }; },
@@ -29,7 +32,8 @@ export function createPointer({ speed = 1, smooth = 0.35, calibrate = 15 } = {})
       // The camera image is mirrored: turning right moves the nose left in the picture.
       const target = { x: 0.5 - (dir.x - neutral.x) * 3.2 * speed, y: 0.5 + (dir.y - neutral.y) * 5 * speed };
       const clamp = (v) => Math.min(1, Math.max(0, v));
-      pos = { x: clamp(pos.x + (target.x - pos.x) * smooth), y: clamp(pos.y + (target.y - pos.y) * smooth) };
+      const a = smooth ?? adaptive(Math.hypot(target.x - pos.x, target.y - pos.y));
+      pos = { x: clamp(pos.x + (target.x - pos.x) * a), y: clamp(pos.y + (target.y - pos.y) * a) };
       return pos;
     },
   };

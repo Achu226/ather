@@ -53,7 +53,7 @@ export function createVoiceControl({ pc, overlay, computer, bounds, keyboard = (
   async function toApp() {
     const fg = await pc.foreground();
     const last = computer.lastExternal();
-    if (/^(Ather|Maya|electron)$/i.test(fg.process) && last) { await pc.activate(last.hwnd); await sleep(300); }
+    if (/^(Ather|Maya|electron)$/i.test(fg.process) && last) { await pc.activate(last.hwnd); await sleep(150); }
   }
   const draw = (extra = {}) => overlay({ kind: 'numbers', bounds: bounds(), items: elements.map(({ i, x, y, w, h, name }) => ({ i, x, y, w, h, name })), ...extra });
   async function showNumbers() {
@@ -63,7 +63,7 @@ export function createVoiceControl({ pc, overlay, computer, bounds, keyboard = (
     return elements.length ? `${elements.length} numbers` : 'No numbers here. Say "show grid" instead.';
   }
   // Numbers follow the screen: after an action they are drawn again for what is there now.
-  const refresh = async () => { if (mode === 'numbers') { await sleep(700); await showNumbers(); } };
+  const refresh = async () => { if (mode === 'numbers') { await sleep(300); await showNumbers(); } };
 
   // ---- switch scanning: controls light up in turn; one press picks ----
   const drawScan = () => { const { items, back } = scanner.lit; draw({ lit: items.map((e) => e.i), back }); };
@@ -95,7 +95,7 @@ export function createVoiceControl({ pc, overlay, computer, bounds, keyboard = (
       if (!chosen) { drawScan(); return { said: 'Ok' }; }
       await toApp();
       await pc.invoke(chosen.i);
-      await sleep(700);
+      await sleep(300);
       await startScan(); // the screen may have changed: scan what is there now
       return { said: `Picked ${chosen.name || chosen.i}` };
     },

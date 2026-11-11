@@ -14,6 +14,7 @@ const TITLES = {
   mail_send: 'Send this email?',
   mail_archive: 'Move these emails out of your inbox?',
   mail_add_tasks: 'Add these to your tasks and calendar?',
+  browser_click: 'Click this on the website?',
 };
 
 /** The question on the card (also spoken when the user answers by voice). */
@@ -33,6 +34,7 @@ function details(name, args) {
   }
   if (name === 'mail_send') return `**To:** ${args.to}\n**Subject:** ${args.subject}\n\n${args.text}`;
   if (name === 'mail_reply') return args.text;
+  if (name === 'browser_click') return `**${args.label}**${args.site ? ` on ${args.site}` : ''}`;
   if (name === 'skills_learn') return `**When:** ${args.when}\n\n${args.steps}\n\nYou can switch it off or delete it on the Skills page.`;
   if (name === 'mail_archive') return `**${args.uids?.length || 0}** email(s). They stay in your archive; nothing is deleted.`;
   if (name === 'mail_add_tasks') return args.items?.map((i) => `- ${i.kind}: **${i.title}**${i.when ? ` (${i.when.replace('T', ' ')})` : ''}`).join('\n');

@@ -22,6 +22,8 @@ const GROUPS = [
   [/\b(open|launch|start|close|quit|volume|louder|quieter|mute|brightness|lock|shutdown|shut down|(turn|switch|power) (off|down)|reboot|restart|sleep|play|pause|next song|previous|music|song|routine|mode|wifi|bluetooth|settings|screen time|spent|youtube|instagram|activity|apps? i used)/i,
     /^(pc_|routines_|activity_|focus_)/],
   [/\b(search|google|latest|news|today|current|price|weather|who won|score|website|web ?page|link|https?:|url|open .*\.com|read this page)/i, /^(web_|open_website)/],
+  // Doing things ON a website (signed in): Maya's own browser.
+  [/\b((in|on|with|use) (maya'?s |your |my |the )?(own )?browser|on (the|this|that|my|our|college|their) ([\w ]{0,20})?(website|site|portal)|portal|(log|sign) ?in (to|on)|fill (in |out )?(the |this |a |an |my )?(online |web )?(form|application)|[\w-]+\.(com|in|org|edu|net|ac\.in|gov\.in)\b)/i, /^browser_/],
   [/\b(find|search|where is|locate) (my|the)|\b(my )?(files?|photos?|pictures?|folder|documents?) (of|about|from|with|named)/i, /^(files_search|open_file)/],
   [/\b(draw|image|picture|photo|illustration|blur|background|upscale|sharper|generate an?)/i, /^images_/],
   [/\b(quiz|flashcards?|revise|revision|study set|test me|practice questions)/i, /^study_/],

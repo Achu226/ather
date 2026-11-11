@@ -36,7 +36,7 @@ function HeadMouse() {
     let lastRing = 0;
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, frameRate: { ideal: 60 }, facingMode: 'user' } });
         video.current.srcObject = stream;
         await video.current.play();
         setStatus('Loading the face tracker…');

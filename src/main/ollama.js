@@ -11,15 +11,20 @@ export function ollamaUrl(host = '') {
   const url = /^https?:\/\//i.test(host) ? host.trim() : `http://${host.trim()}`;
   return url.replace(/\/\/(0\.0\.0\.0|\[::\])(?=[:/]|$)/, '//127.0.0.1').replace(/\/+$/, '');
 }
-export const OLLAMA = ollamaUrl(process.env.OLLAMA_HOST);
+// A live binding: brain, providers, imaging, mail and embeddings all follow setOllamaHost().
+export let OLLAMA = ollamaUrl(process.env.OLLAMA_HOST);
+/** Think on another PC's Ollama (the "brain server"); '' = this PC. Returns the URL now in use. */
+export function setOllamaHost(host = '') { OLLAMA = ollamaUrl(host || process.env.OLLAMA_HOST || ''); return OLLAMA; }
+export const isLocalOllama = (url = OLLAMA) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?=[:/]|$)/i.test(url);
 
 async function up() {
   try { return (await fetch(`${OLLAMA}/api/version`, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; }
 }
 
-/** Make sure the Ollama server is running; start it if it is installed but stopped. */
+/** Make sure the Ollama server is running; start it if it is installed but stopped (only on this PC). */
 export async function ensureOllama() {
   if (await up()) return true;
+  if (!isLocalOllama()) return false; // another PC's brain: Maya can't start it from here
   const exe = [join(process.env.LOCALAPPDATA || '', 'Programs', 'Ollama', 'ollama.exe')].find(existsSync) || 'ollama';
   try {
     spawn(exe, ['serve'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();

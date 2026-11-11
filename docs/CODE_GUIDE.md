@@ -1,6 +1,6 @@
-# Maya 1.8.5 — source code guide
+# Maya 1.9.0 — source code guide
 
-Every source file, in reading order, grouped by the modules of the AETHER project report. 213 files, 20,641 lines. Languages: JavaScript (Node.js + React), HTML, CSS; C# and PowerShell inside src/main/services/pc.js; Windows batch files.
+Every source file, in reading order, grouped by the modules of the AETHER project report. 219 files, 21,119 lines. Languages: JavaScript (Node.js + React), HTML, CSS; C# and PowerShell inside src/main/services/pc.js; Windows batch files.
 
 Start here: `start.bat` runs Maya from this folder; `install.bat` installs the latest release on another PC.
 
@@ -10,10 +10,10 @@ Speech to text (Whisper), text to speech (Kokoro, Tamil MMS), the face window (n
 
 | # | File | Lines | What it does |
 |---|---|---|---|
-| 1 | [src/main/main.js](../src/main/main.js) | 440 | Electron entry point: creates every service, the windows, global shortcuts and timers. |
+| 1 | [src/main/main.js](../src/main/main.js) | 457 | Electron entry point: creates every service, the windows, global shortcuts and timers. |
 | 2 | [src/main/windows.js](../src/main/windows.js) | 281 | All windows: the face at the top of the screen, the app, tray, snip overlay, captions bar, head-mouse camera and voice-control layer. |
-| 3 | [src/preload/preload.cjs](../src/preload/preload.cjs) | 188 | The safe bridge (window.ather) between the web pages and the core. |
-| 4 | [src/main/ipc.js](../src/main/ipc.js) | 472 | Every request from the windows to the core (ask, tools, settings, models, workflows, captions, head mouse…), with the PIN-lock check. |
+| 3 | [src/preload/preload.cjs](../src/preload/preload.cjs) | 194 | The safe bridge (window.ather) between the web pages and the core. |
+| 4 | [src/main/ipc.js](../src/main/ipc.js) | 485 | Every request from the windows to the core (ask, tools, settings, models, workflows, captions, head mouse…), with the PIN-lock check. |
 | 5 | [src/main/speech.js](../src/main/speech.js) | 50 | Speaking replies: Kokoro for Latin-script text, Windows voices for other alphabets. |
 | 6 | [src/main/dictation.js](../src/main/dictation.js) | 35 | "Type with your voice": transcribed text is pasted into whatever app has focus. |
 | 7 | [src/main/services/sapi.js](../src/main/services/sapi.js) | 48 | Offline Windows voices (System.Speech) for languages Kokoro cannot speak, e.g. Hindi, Russian, Chinese. |
@@ -51,7 +51,7 @@ Speech to text (Whisper), text to speech (Kokoro, Tamil MMS), the face window (n
 | 39 | [src/renderer/shared/MicButton.jsx](../src/renderer/shared/MicButton.jsx) | 15 |  |
 | 40 | [src/renderer/app.html](../src/renderer/app.html) | 13 | Page for the app window. |
 | 41 | [src/renderer/app.jsx](../src/renderer/app.jsx) | 110 | The app window: sidebar sections, setup, lock screen and approvals. |
-| 42 | [src/renderer/app.css](../src/renderer/app.css) | 309 | Styles of the app window (chat, workflows, timetable, meters…). |
+| 42 | [src/renderer/app.css](../src/renderer/app.css) | 314 | Styles of the app window (chat, workflows, timetable, meters…). |
 | 43 | [src/renderer/shared/base.css](../src/renderer/shared/base.css) | 204 | Shared colours, light/dark theme and face animations. |
 | 44 | [src/renderer/app/Chat.jsx](../src/renderer/app/Chat.jsx) | 239 | ChatGPT-style chat: conversations, model picker, files, voice, agent checklist. |
 | 45 | [src/renderer/app/Home.jsx](../src/renderer/app/Home.jsx) | 173 | Home: briefing, today, coming up (classes, exams), what Maya noticed. |
@@ -66,9 +66,9 @@ Understands the request, picks the model, chooses tools, plans multi-step goals 
 | 2 | [src/main/models.js](../src/main/models.js) | 89 | Which LLM answers which question. |
 | 3 | [src/main/personality.js](../src/main/personality.js) | 99 | Personalities from the website (Normal, Brother, Anime Girl, Butler, Italian, Russian), written for Maya. |
 | 4 | [src/main/providers.js](../src/main/providers.js) | 112 | Every place a model can run: local (Ollama, LM Studio) or cloud (any OpenAI-compatible API). |
-| 5 | [src/main/ollama.js](../src/main/ollama.js) | 87 | Talks to Ollama: is it running, pull models, build ather-brain/ather-smart, embeddings, free the GPU. |
-| 6 | [src/main/tools/index.js](../src/main/tools/index.js) | 14 | The full list of tools the AI can use. |
-| 7 | [src/main/tools/select.js](../src/main/tools/select.js) | 74 | Give the model only the tools a request can need: ~60 tool descriptions confuse small models into |
+| 5 | [src/main/ollama.js](../src/main/ollama.js) | 92 | Talks to Ollama: is it running, pull models, build ather-brain/ather-smart, embeddings, free the GPU. |
+| 6 | [src/main/tools/index.js](../src/main/tools/index.js) | 15 | The full list of tools the AI can use. |
+| 7 | [src/main/tools/select.js](../src/main/tools/select.js) | 76 | Give the model only the tools a request can need: ~60 tool descriptions confuse small models into |
 | 8 | [src/main/services/skills.js](../src/main/services/skills.js) | 105 | Skills: named recipes Maya follows ("when I say goodnight, turn on dark mode and read tomorrow's tasks"). |
 | 9 | [src/main/services/learning.js](../src/main/services/learning.js) | 79 | Learning from the user, all on this PC: words Maya keeps mishearing, and what the user liked or did not like. |
 | 10 | [src/main/services/worklog.js](../src/main/services/worklog.js) | 55 | The work monitor: every action Maya takes, in plain words ("Wrote app.js", "Sent an email to Rahul"), |
@@ -76,12 +76,12 @@ Understands the request, picks the model, chooses tools, plans multi-step goals 
 | 12 | [src/renderer/app/Skills.jsx](../src/renderer/app/Skills.jsx) | 56 |  |
 | 13 | [src/renderer/app/Monitor.jsx](../src/renderer/app/Monitor.jsx) | 56 |  |
 | 14 | [src/renderer/app/Agent.jsx](../src/renderer/app/Agent.jsx) | 152 |  |
-| 15 | [src/renderer/app/Connections.jsx](../src/renderer/app/Connections.jsx) | 148 |  |
+| 15 | [src/renderer/app/Connections.jsx](../src/renderer/app/Connections.jsx) | 154 |  |
 | 16 | [src/renderer/app/Brain.jsx](../src/renderer/app/Brain.jsx) | 113 |  |
 | 17 | [src/renderer/shared/work.js](../src/renderer/shared/work.js) | 9 | The face Maya makes while a tool runs, like a person at work (exported for tests). |
 | 18 | [src/main/services/workflows.js](../src/main/services/workflows.js) | 115 | Runs saved routines as workflows: each step has a live state (waiting, running, awaiting approval, |
 | 19 | [src/renderer/app/Workflows.jsx](../src/renderer/app/Workflows.jsx) | 157 | Workflows page: describe → steps → run, live node states, pause/resume/cancel/retry, history. |
-| 20 | [src/renderer/app/Models.jsx](../src/renderer/app/Models.jsx) | 123 | AI models page: local and cloud providers, API keys, tests, usage. |
+| 20 | [src/renderer/app/Models.jsx](../src/renderer/app/Models.jsx) | 126 | AI models page: local and cloud providers, API keys, tests, usage. |
 
 ## 3. Local OS & Environment Sandbox
 
@@ -92,15 +92,15 @@ Safe access to the PC: approved folders only, approval cards for risky actions, 
 | 1 | [src/main/approvals.js](../src/main/approvals.js) | 34 | Ask the user in a window before a risky tool runs. Unanswered requests are denied after 5 minutes. |
 | 2 | [src/main/tools/dev.js](../src/main/tools/dev.js) | 309 | Built-in "MCP-style" capabilities: file manager, Git, SQLite, time, and approved commands. |
 | 3 | [src/main/tools/pc.js](../src/main/tools/pc.js) | 180 | PC control, routines and activity. ctx.services supplies pc and activity. |
-| 4 | [src/main/services/pc.js](../src/main/services/pc.js) | 488 | PC control and activity sensing through one long-running PowerShell helper (Win32 + Core Audio via C#). |
-| 5 | [src/main/tools/computer.js](../src/main/tools/computer.js) | 215 | Computer control: Maya works in other apps through Windows UI Automation (named buttons and fields), |
+| 4 | [src/main/services/pc.js](../src/main/services/pc.js) | 499 | PC control and activity sensing through one long-running PowerShell helper (Win32 + Core Audio via C#). |
+| 5 | [src/main/tools/computer.js](../src/main/tools/computer.js) | 222 | Computer control: Maya works in other apps through Windows UI Automation (named buttons and fields), |
 | 6 | [src/main/services/sysmon.js](../src/main/services/sysmon.js) | 52 | "This PC" monitor: CPU, memory, disk, GPU (NVIDIA), battery and the busiest apps. |
 | 7 | [src/main/services/activity.js](../src/main/services/activity.js) | 73 | Which apps/sites the user spends time in (local only, app/site names, never full window titles), |
-| 8 | [src/renderer/shared/Approvals.jsx](../src/renderer/shared/Approvals.jsx) | 96 | Approval cards: Maya asks before risky actions. |
+| 8 | [src/renderer/shared/Approvals.jsx](../src/renderer/shared/Approvals.jsx) | 98 | Approval cards: Maya asks before risky actions. |
 | 9 | [src/renderer/app/Activity.jsx](../src/renderer/app/Activity.jsx) | 141 | Activity page: time per app, This PC meters, Maya's actions on the PC. |
 | 10 | [src/renderer/headmouse.html](../src/renderer/headmouse.html) | 25 | Page for the head-mouse camera window. |
 | 11 | [src/renderer/headmouse.jsx](../src/renderer/headmouse.jsx) | 114 | Hands-free mouse: the webcam follows your head to move the cursor; open your mouth to click, smile to right-click, |
-| 12 | [src/renderer/shared/headpose.js](../src/renderer/shared/headpose.js) | 171 | Head mouse maths: face landmarks → cursor position, face expressions → clicks. Pure, so it is unit tested. |
+| 12 | [src/renderer/shared/headpose.js](../src/renderer/shared/headpose.js) | 175 | Head mouse maths: face landmarks → cursor position, face expressions → clicks. Pure, so it is unit tested. |
 
 ## 4. Autonomous Engineering Sub-Agent
 
@@ -213,14 +213,18 @@ Memory, web, smart search, screen snip, clipboard history, live captions, health
 | 12 | [src/main/tools/everyday.js](../src/main/tools/everyday.js) | 210 | Everyday voice actions (as on heynixi.app): point at things on screen, write at the cursor, teleprompter, |
 | 13 | [src/main/services/places.js](../src/main/services/places.js) | 96 | Wheelchair-accessible places nearby, from OpenStreetMap's own search (Nominatim: free, no key; one request per |
 | 14 | [src/main/services/watch.js](../src/main/services/watch.js) | 60 | Watch a website (as in OpenClaw's monitoring): Maya re-reads a page every few hours and tells the user (desktop |
-| 15 | [src/main/services/timers.js](../src/main/services/timers.js) | 41 | Countdown timers ("set a timer for 10 minutes"). notify() rings and speaks when one ends; onChange(list) keeps the |
-| 16 | [src/renderer/prompter.html](../src/renderer/prompter.html) | 31 |  |
-| 17 | [src/renderer/prompter.jsx](../src/renderer/prompter.jsx) | 79 | Teleprompter that listens: the script scrolls along as you read it aloud, and waits when you pause. |
-| 18 | [src/renderer/shared/prompter.js](../src/renderer/shared/prompter.js) | 26 | Teleprompter maths: find where the reader is in the script from the last words they said. |
-| 19 | [src/renderer/camera.html](../src/renderer/camera.html) | 12 |  |
-| 20 | [src/renderer/camera.js](../src/renderer/camera.js) | 21 | Camera eyes: one photo from the webcam, taken only when Maya is asked ("what's in front of me?", "read this paper"). |
-| 21 | [src/main/services/interpreter.js](../src/main/services/interpreter.js) | 38 | Interpreter mode: two people talk, Maya says each sentence in the other language (English ↔ another language). |
-| 22 | [src/main/tools/people.js](../src/main/tools/people.js) | 138 | People and feelings: a contact book for calls and WhatsApp by voice, and a spoken diary with moods. |
+| 15 | [src/main/services/browser.js](../src/main/services/browser.js) | 93 | Maya's own browser: one window with its own signed-in session (cookies kept). Maya reads pages and clicks and types |
+| 16 | [src/main/tools/browser.js](../src/main/tools/browser.js) | 55 | Maya's own browser (services/browser.js): websites by numbered elements, signed in once by the user. |
+| 17 | [src/main/services/brainserver.js](../src/main/services/brainserver.js) | 58 | Brain server: this PC shares its Ollama with the user's other devices (over Tailscale), or Maya thinks on another PC's. |
+| 18 | [src/renderer/app/BrainServer.jsx](../src/renderer/app/BrainServer.jsx) | 73 |  |
+| 19 | [src/main/services/timers.js](../src/main/services/timers.js) | 41 | Countdown timers ("set a timer for 10 minutes"). notify() rings and speaks when one ends; onChange(list) keeps the |
+| 20 | [src/renderer/prompter.html](../src/renderer/prompter.html) | 31 |  |
+| 21 | [src/renderer/prompter.jsx](../src/renderer/prompter.jsx) | 79 | Teleprompter that listens: the script scrolls along as you read it aloud, and waits when you pause. |
+| 22 | [src/renderer/shared/prompter.js](../src/renderer/shared/prompter.js) | 26 | Teleprompter maths: find where the reader is in the script from the last words they said. |
+| 23 | [src/renderer/camera.html](../src/renderer/camera.html) | 12 |  |
+| 24 | [src/renderer/camera.js](../src/renderer/camera.js) | 21 | Camera eyes: one photo from the webcam, taken only when Maya is asked ("what's in front of me?", "read this paper"). |
+| 25 | [src/main/services/interpreter.js](../src/main/services/interpreter.js) | 38 | Interpreter mode: two people talk, Maya says each sentence in the other language (English ↔ another language). |
+| 26 | [src/main/tools/people.js](../src/main/tools/people.js) | 138 | People and feelings: a contact book for calls and WhatsApp by voice, and a spoken diary with moods. |
 
 ## 11. Data, security and settings
 
@@ -254,49 +258,51 @@ Automatic checks (npm test). Model tests skip themselves when a model is not dow
 | 2 | [test/advanced.test.js](../test/advanced.test.js) | 140 | Chat summaries, follow-ups, memory and real-model conversation checks. |
 | 3 | [test/agent.test.js](../test/agent.test.js) | 171 | My Maya: safe look/name/speed changes by voice, rules in the prompt, OpenAI voice request, wake word follows the name. |
 | 4 | [test/brain.test.js](../test/brain.test.js) | 101 | Integration test against the real local Ollama + qwen3.5:4b. Skipped when Ollama is not running. |
-| 5 | [test/briefing.test.js](../test/briefing.test.js) | 48 | Daily briefing and nudges. |
-| 6 | [test/coding-agent.test.js](../test/coding-agent.test.js) | 61 | Acceptance test (master prompt, feature 2): the agent fixes a reproducible bug so the project's tests pass. |
-| 7 | [test/colors.test.js](../test/colors.test.js) | 28 |  |
-| 8 | [test/computer.test.js](../test/computer.test.js) | 79 | Computer control through Windows UI Automation on a real app: Notepad. |
-| 9 | [test/dictate.test.js](../test/dictate.test.js) | 30 |  |
-| 10 | [test/emotion.test.js](../test/emotion.test.js) | 27 | Face emotions from what the user says. |
-| 11 | [test/everyday.test.js](../test/everyday.test.js) | 62 |  |
-| 12 | [test/eyes.test.js](../test/eyes.test.js) | 43 |  |
-| 13 | [test/headpose.test.js](../test/headpose.test.js) | 92 | Head mouse maths: head direction, cursor, mouth/smile clicks. |
-| 14 | [test/holdkeys.test.js](../test/holdkeys.test.js) | 48 |  |
-| 15 | [test/image-extras.test.js](../test/image-extras.test.js) | 50 | Background removal and upscaling. |
-| 16 | [test/imaging.test.js](../test/imaging.test.js) | 45 | Real image generation + blur (slow, uses the GPU). Skipped until the models are downloaded. |
-| 17 | [test/integration.test.js](../test/integration.test.js) | 71 | Integration: smart search, MCP agent connection, calendar feeds. Needs Ollama + downloaded models + internet. |
-| 18 | [test/keyboard.test.js](../test/keyboard.test.js) | 29 | Keyboard word suggestions; passwords and codes never learned. |
-| 19 | [test/learning.test.js](../test/learning.test.js) | 91 | Learning: misheard words fixed next time, a thumbs-down note becomes a preference, good/bad answer by voice. |
-| 20 | [test/lectures.test.js](../test/lectures.test.js) | 43 | Lecture pipeline with real models: Kokoro "teacher" audio → Whisper transcript pieces → notes → flashcards. |
-| 21 | [test/lite.test.js](../test/lite.test.js) | 23 |  |
-| 22 | [test/mail.test.js](../test/mail.test.js) | 155 | Email: search, read, threaded reply, archive (never delete), approvals, follow-ups, weekly report; live model checks. |
-| 23 | [test/mcp-client.test.js](../test/mcp-client.test.js) | 106 | Real MCP servers: each must connect, list tools AND run a tool. Needs internet + Node (npx) the first time. |
-| 24 | [test/memory.test.js](../test/memory.test.js) | 44 | Memory: survives restart, updates, deletes, refuses secrets. |
-| 25 | [test/ml.test.js](../test/ml.test.js) | 33 | Real-model checks (slow). Skipped until the models are downloaded: node scripts/fetch-models.js |
-| 26 | [test/monitor.test.js](../test/monitor.test.js) | 141 | Work monitor in plain words, working faces, OLLAMA_HOST addresses, tool calls written as text. |
-| 27 | [test/noiseswitch.test.js](../test/noiseswitch.test.js) | 36 |  |
-| 28 | [test/pc.test.js](../test/pc.test.js) | 40 | App-name matching and window descriptions. |
-| 29 | [test/people.test.js](../test/people.test.js) | 75 |  |
-| 30 | [test/places.test.js](../test/places.test.js) | 108 |  |
-| 31 | [test/power.test.js](../test/power.test.js) | 81 | Python, PowerPoint/Word, approvals, code interpreter, agent mode. |
-| 32 | [test/productivity.test.js](../test/productivity.test.js) | 78 | Tasks, notes, reminders, habits, focus, undo. |
-| 33 | [test/prompter.test.js](../test/prompter.test.js) | 20 |  |
-| 34 | [test/providers.test.js](../test/providers.test.js) | 73 | Provider engine against real endpoints: Ollama's OpenAI-compatible API registered as a "custom" provider, |
-| 35 | [test/scanning.test.js](../test/scanning.test.js) | 35 | Switch scanning order: groups, controls, back step. |
-| 36 | [test/security.test.js](../test/security.test.js) | 81 | PIN lock, backup and restore, icons. |
-| 37 | [test/select.test.js](../test/select.test.js) | 45 | Which tools each request gets. |
-| 38 | [test/services.test.js](../test/services.test.js) | 83 | Tool names, read-only tools, scheduler, audio. |
-| 39 | [test/session.test.js](../test/session.test.js) | 321 | Work timer goodbye and shutdown (never real), voice wait/magnifier/pages, blink click, care reminders, emergency call, ChatGPT answer reading. |
-| 40 | [test/skills-learn.test.js](../test/skills-learn.test.js) | 77 |  |
-| 41 | [test/skills.test.js](../test/skills.test.js) | 77 | Skills: built-ins use real tools, the right skill is picked, everyday sentences pick none, taught skills by name. |
-| 42 | [test/sos.test.js](../test/sos.test.js) | 118 | Emergency: countdown, cancel, caregiver email, check-in hours. |
-| 43 | [test/speakboard.test.js](../test/speakboard.test.js) | 28 |  |
-| 44 | [test/student.test.js](../test/student.test.js) | 85 | Timetable, exams, class alerts, clipboard, health breaks. |
-| 45 | [test/telegram.test.js](../test/telegram.test.js) | 213 |  |
-| 46 | [test/voicecommands.test.js](../test/voicecommands.test.js) | 51 | Voice commands, questions left for the AI, spoken yes/no in English and Tamil. |
-| 47 | [test/wake.test.js](../test/wake.test.js) | 56 | "Hey Maya" wake word and stop phrases. |
-| 48 | [test/watch.test.js](../test/watch.test.js) | 82 |  |
-| 49 | [test/web-voice.test.js](../test/web-voice.test.js) | 33 | Web search through the brain + Windows voice fallback. Needs Ollama and internet. |
-| 50 | [test/workflows.test.js](../test/workflows.test.js) | 99 | Workflows: 3 real steps, cancel, pause/resume, retry, approval, schedule. |
+| 5 | [test/brainserver.test.js](../test/brainserver.test.js) | 43 |  |
+| 6 | [test/briefing.test.js](../test/briefing.test.js) | 48 | Daily briefing and nudges. |
+| 7 | [test/browser.test.js](../test/browser.test.js) | 58 |  |
+| 8 | [test/coding-agent.test.js](../test/coding-agent.test.js) | 61 | Acceptance test (master prompt, feature 2): the agent fixes a reproducible bug so the project's tests pass. |
+| 9 | [test/colors.test.js](../test/colors.test.js) | 28 |  |
+| 10 | [test/computer.test.js](../test/computer.test.js) | 79 | Computer control through Windows UI Automation on a real app: Notepad. |
+| 11 | [test/dictate.test.js](../test/dictate.test.js) | 30 |  |
+| 12 | [test/emotion.test.js](../test/emotion.test.js) | 27 | Face emotions from what the user says. |
+| 13 | [test/everyday.test.js](../test/everyday.test.js) | 62 |  |
+| 14 | [test/eyes.test.js](../test/eyes.test.js) | 43 |  |
+| 15 | [test/headpose.test.js](../test/headpose.test.js) | 108 | Head mouse maths: head direction, cursor, mouth/smile clicks. |
+| 16 | [test/holdkeys.test.js](../test/holdkeys.test.js) | 48 |  |
+| 17 | [test/image-extras.test.js](../test/image-extras.test.js) | 50 | Background removal and upscaling. |
+| 18 | [test/imaging.test.js](../test/imaging.test.js) | 45 | Real image generation + blur (slow, uses the GPU). Skipped until the models are downloaded. |
+| 19 | [test/integration.test.js](../test/integration.test.js) | 71 | Integration: smart search, MCP agent connection, calendar feeds. Needs Ollama + downloaded models + internet. |
+| 20 | [test/keyboard.test.js](../test/keyboard.test.js) | 29 | Keyboard word suggestions; passwords and codes never learned. |
+| 21 | [test/learning.test.js](../test/learning.test.js) | 91 | Learning: misheard words fixed next time, a thumbs-down note becomes a preference, good/bad answer by voice. |
+| 22 | [test/lectures.test.js](../test/lectures.test.js) | 43 | Lecture pipeline with real models: Kokoro "teacher" audio → Whisper transcript pieces → notes → flashcards. |
+| 23 | [test/lite.test.js](../test/lite.test.js) | 23 |  |
+| 24 | [test/mail.test.js](../test/mail.test.js) | 155 | Email: search, read, threaded reply, archive (never delete), approvals, follow-ups, weekly report; live model checks. |
+| 25 | [test/mcp-client.test.js](../test/mcp-client.test.js) | 106 | Real MCP servers: each must connect, list tools AND run a tool. Needs internet + Node (npx) the first time. |
+| 26 | [test/memory.test.js](../test/memory.test.js) | 44 | Memory: survives restart, updates, deletes, refuses secrets. |
+| 27 | [test/ml.test.js](../test/ml.test.js) | 33 | Real-model checks (slow). Skipped until the models are downloaded: node scripts/fetch-models.js |
+| 28 | [test/monitor.test.js](../test/monitor.test.js) | 141 | Work monitor in plain words, working faces, OLLAMA_HOST addresses, tool calls written as text. |
+| 29 | [test/noiseswitch.test.js](../test/noiseswitch.test.js) | 36 |  |
+| 30 | [test/pc.test.js](../test/pc.test.js) | 40 | App-name matching and window descriptions. |
+| 31 | [test/people.test.js](../test/people.test.js) | 75 |  |
+| 32 | [test/places.test.js](../test/places.test.js) | 108 |  |
+| 33 | [test/power.test.js](../test/power.test.js) | 81 | Python, PowerPoint/Word, approvals, code interpreter, agent mode. |
+| 34 | [test/productivity.test.js](../test/productivity.test.js) | 78 | Tasks, notes, reminders, habits, focus, undo. |
+| 35 | [test/prompter.test.js](../test/prompter.test.js) | 20 |  |
+| 36 | [test/providers.test.js](../test/providers.test.js) | 73 | Provider engine against real endpoints: Ollama's OpenAI-compatible API registered as a "custom" provider, |
+| 37 | [test/scanning.test.js](../test/scanning.test.js) | 35 | Switch scanning order: groups, controls, back step. |
+| 38 | [test/security.test.js](../test/security.test.js) | 81 | PIN lock, backup and restore, icons. |
+| 39 | [test/select.test.js](../test/select.test.js) | 45 | Which tools each request gets. |
+| 40 | [test/services.test.js](../test/services.test.js) | 83 | Tool names, read-only tools, scheduler, audio. |
+| 41 | [test/session.test.js](../test/session.test.js) | 321 | Work timer goodbye and shutdown (never real), voice wait/magnifier/pages, blink click, care reminders, emergency call, ChatGPT answer reading. |
+| 42 | [test/skills-learn.test.js](../test/skills-learn.test.js) | 77 |  |
+| 43 | [test/skills.test.js](../test/skills.test.js) | 77 | Skills: built-ins use real tools, the right skill is picked, everyday sentences pick none, taught skills by name. |
+| 44 | [test/sos.test.js](../test/sos.test.js) | 118 | Emergency: countdown, cancel, caregiver email, check-in hours. |
+| 45 | [test/speakboard.test.js](../test/speakboard.test.js) | 28 |  |
+| 46 | [test/student.test.js](../test/student.test.js) | 85 | Timetable, exams, class alerts, clipboard, health breaks. |
+| 47 | [test/telegram.test.js](../test/telegram.test.js) | 213 |  |
+| 48 | [test/voicecommands.test.js](../test/voicecommands.test.js) | 51 | Voice commands, questions left for the AI, spoken yes/no in English and Tamil. |
+| 49 | [test/wake.test.js](../test/wake.test.js) | 56 | "Hey Maya" wake word and stop phrases. |
+| 50 | [test/watch.test.js](../test/watch.test.js) | 82 |  |
+| 51 | [test/web-voice.test.js](../test/web-voice.test.js) | 33 | Web search through the brain + Windows voice fallback. Needs Ollama and internet. |
+| 52 | [test/workflows.test.js](../test/workflows.test.js) | 99 | Workflows: 3 real steps, cancel, pause/resume, retry, approval, schedule. |

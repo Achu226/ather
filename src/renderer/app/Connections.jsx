@@ -125,6 +125,12 @@ export default function Connections({ go, version }) {
           {tg?.configured && <button className="btn small" onClick={async () => setTg(await window.ather.telegramForget())}>Disconnect Telegram</button>}
         </Card>
 
+        <Card icon="🌐" name="Maya browser" on
+          detail="Maya's own browser: sign in to your sites once (Gmail, college portal, shops), then Maya reads, clicks and types there for you. She never types passwords, and asks before sending, buying, posting or deleting."
+          say="open my college portal and check my attendance">
+          <button className="btn small primary" onClick={() => window.ather.browserShow()}>Open Maya browser to sign in</button>
+        </Card>
+
         <Card icon="🔔" name="Watch a website" on={watches.length > 0}
           detail="Maya re-reads a page every few hours and tells you when it changes (also on Telegram): exam results, a notice, a price." say="tell me when https://… changes">
           {!!watches.length && <ul className="list">{watches.map((w) => (

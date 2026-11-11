@@ -101,7 +101,7 @@ function Click-Center($r) { [AtherPc]::Click([int]($r.X + $r.Width / 2), [int]($
 # so a nearly empty result is looked at once more.
 function Get-Elements {
   $json = Collect-Elements
-  if ($global:els.Count -lt 25) { Start-Sleep -Milliseconds 900; $json = Collect-Elements }
+  if ($global:els.Count -lt 25) { Start-Sleep -Milliseconds 500; $json = Collect-Elements }
   $json
 }
 # Visible, named controls of the active window (breadth-first, capped), remembered by index for click/type.
@@ -199,9 +199,9 @@ while ($true) {
         (@($kind, $c.Name, $v, $c.HelpText) | ForEach-Object { "$_" -replace '\s+', ' ' }) -join [char]9 }
       default { throw "unknown command $cmd" }
     }
-    $stdout.WriteLine((@{ id = $id; ok = $true; result = "$r" } | ConvertTo-Json -Compress))
+    if ($id -ne '0') { $stdout.WriteLine((@{ id = $id; ok = $true; result = "$r" } | ConvertTo-Json -Compress)) }
   } catch {
-    $stdout.WriteLine((@{ id = $id; ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress))
+    if ($id -ne '0') { $stdout.WriteLine((@{ id = $id; ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress)) }
   }
 }
 `;
@@ -302,47 +302,58 @@ export async function faceAction(pc, action) {
 }
 
 export function createPc({ shell, scale = () => 1, chromeChoice = () => null }) {
-  let child = null;
-  let seq = 0;
-  const pending = new Map();
-
-  function start() {
-    // The helper is too long for a command line (Windows allows 32,767 characters), so it runs from a file.
-    // The BOM makes Windows PowerShell 5.1 read it as UTF-8.
-    const script = join(dataDir, 'pc-helper.ps1');
-    const body = `﻿${HELPER}`;
-    // Written only when it changed, and atomically: several Maya processes (or tests) may start helpers at once.
-    if (!existsSync(script) || readFileSync(script, 'utf8') !== body) {
-      const tmp = `${script}.${process.pid}.tmp`;
-      writeFileSync(tmp, body);
-      renameSync(tmp, script);
+  /** One PowerShell helper process with its own queue of commands. */
+  function helper() {
+    let child = null;
+    let seq = 0;
+    const pending = new Map();
+    function start() {
+      // The helper is too long for a command line (Windows allows 32,767 characters), so it runs from a file.
+      // The BOM makes Windows PowerShell 5.1 read it as UTF-8.
+      const script = join(dataDir, 'pc-helper.ps1');
+      const body = `﻿${HELPER}`;
+      // Written only when it changed, and atomically: several Maya processes (or tests) may start helpers at once.
+      if (!existsSync(script) || readFileSync(script, 'utf8') !== body) {
+        const tmp = `${script}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+        writeFileSync(tmp, body);
+        renameSync(tmp, script);
+      }
+      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+      child.stdin.write(`0\tdpi\t${scale()}\n`); // before any move or click (id 0: no reply)
+      createInterface({ input: child.stdout }).on('line', (line) => {
+        let msg;
+        try { msg = JSON.parse(line); } catch { return; }
+        const p = pending.get(msg.id);
+        if (!p) return;
+        pending.delete(msg.id);
+        msg.ok ? p.resolve(msg.result) : p.reject(new Error(msg.error));
+      });
+      const me = child;
+      child.on('exit', () => {
+        if (child === me) child = null;
+        for (const p of pending.values()) p.reject(new Error('PC helper stopped'));
+        pending.clear();
+      });
     }
-    child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
-    child.stdin.write(`0\tdpi\t${scale()}\n`); // before any move or click (id 0: no reply awaited)
-    createInterface({ input: child.stdout }).on('line', (line) => {
-      let msg;
-      try { msg = JSON.parse(line); } catch { return; }
-      const p = pending.get(msg.id);
-      if (!p) return;
-      pending.delete(msg.id);
-      msg.ok ? p.resolve(msg.result) : p.reject(new Error(msg.error));
-    });
-    child.on('exit', () => {
-      child = null;
-      for (const p of pending.values()) p.reject(new Error('PC helper stopped'));
-      pending.clear();
-    });
+    return {
+      send(cmd, arg = '') {
+        if (!child) start();
+        const id = String(++seq);
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          child.stdin.write(`${id}\t${cmd}\t${arg}\n`);
+          setTimeout(() => { if (pending.delete(id)) reject(new Error('PC helper timed out')); }, 15_000);
+        });
+      },
+      /** Fire and forget (id 0 gets no reply). */
+      post(cmd, arg = '') { if (!child) start(); child.stdin.write(`0\t${cmd}\t${arg}\n`); },
+      stop: () => child?.kill(),
+    };
   }
-
-  function send(cmd, arg = '') {
-    if (!child) start();
-    const id = String(++seq);
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${id}\t${cmd}\t${arg}\n`);
-      setTimeout(() => { if (pending.delete(id)) reject(new Error('PC helper timed out')); }, 15_000);
-    });
-  }
+  const main = helper();
+  // The head mouse has its own helper: a screen read (up to ~9 s) in the main one never holds the cursor up.
+  const mover = helper();
+  const send = main.send;
 
   const startMenu = [join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft\\Windows\\Start Menu\\Programs'), join(process.env.APPDATA || '', 'Microsoft\\Windows\\Start Menu\\Programs')];
   function shortcuts() {
@@ -461,9 +472,9 @@ export function createPc({ shell, scale = () => 1, chromeChoice = () => null }) 
     drag: (x1, y1, x2, y2) => send('drag', [x1, y1, x2, y2].map(Math.round).join(',')),
     /** What is under the mouse pointer: { kind, name, value, hint }. */
     async atPointer() { const [kind = '', name = '', value = '', hint = ''] = String(await send('atpoint')).split('\t'); return { kind, name, value, hint }; },
-    // Head mouse: many moves a second, so no reply is awaited (id 0 is never pending).
-    move(x, y) { if (!child) start(); child.stdin.write(`0\tmove\t${Math.round(x)},${Math.round(y)}\n`); },
-    clickHere: (button = 'left') => send('clickhere', button),
+    // Head mouse: many moves a second, so no reply (id 0), on the mover helper.
+    move(x, y) { mover.post('move', `${Math.round(x)},${Math.round(y)}`); },
+    clickHere: (button = 'left') => mover.send('clickhere', button),
     keys: (seq) => send('keys', seq),
     /** Virtual-key codes pressed together, e.g. Win + Plus for the Magnifier. */
     chord: (...vks) => send('chord', vks.join(',')),
@@ -482,6 +493,6 @@ export function createPc({ shell, scale = () => 1, chromeChoice = () => null }) 
     openApp, power, closeApp, startUri, shortcuts,
     /** A website in the user's Chrome profile (signed in to Gmail, ChatGPT…), else the default browser. */
     async openUrl(url) { if (!(await startChrome([url]))) await shell.openExternal(url); }, storeApps,
-    stop: () => child?.kill(),
+    stop: () => { main.stop(); mover.stop(); },
   };
 }

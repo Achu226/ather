@@ -66,6 +66,22 @@ test('pointer calibrates to the centre, then follows the head (mirrored)', () =>
   assert.equal(p.update(headDirection(face(0.5, 0))).x, 0); // clamped to the screen
 });
 
+test('pointer follows a big head turn within 2 frames but holds still through head tremor', () => {
+  const p = createPointer({ calibrate: 3 });
+  for (let i = 0; i < 3; i++) p.update({ x: 0, y: 0 });
+  // A turn whose target is x = 0.5 - 0.1 * 3.2 = 0.18.
+  p.update({ x: 0.1, y: 0 });
+  const x2 = p.update({ x: 0.1, y: 0 }).x;
+  assert.ok((0.5 - x2) / (0.5 - 0.18) > 0.9, `2 frames reached ${x2}`);
+  // Tremor: ±0.001 around still (about ±6 px of target on a 1920 px screen); seeded, no randomness.
+  const q = createPointer({ calibrate: 1 });
+  q.update({ x: 0, y: 0 });
+  const xs = [];
+  for (let i = 0; i < 60; i++) xs.push(q.update({ x: i % 2 ? 0.001 : -0.001, y: 0 }).x);
+  const spread = (Math.max(...xs.slice(10)) - Math.min(...xs.slice(10))) * 1920;
+  assert.ok(spread < 3, `cursor shook ${spread.toFixed(1)} px`);
+});
+
 test('open mouth clicks once per opening; smile right-clicks; mouth opening freezes the cursor', () => {
   const g = createGestures({ hold: 100, cooldown: 0 });
   assert.deepEqual(g({ jawOpen: 0.6 }, 0), { click: null, freeze: true });

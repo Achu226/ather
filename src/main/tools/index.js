@@ -9,5 +9,6 @@ import { studentTools } from './student.js';
 import { everydayTools } from './everyday.js';
 import { peopleTools } from './people.js';
 import { mayaTools } from './maya.js';
+import { browserTools } from './browser.js';
 
-export const allTools = [...productivityTools, ...extraTools, ...assistantTools, ...powerTools, ...pcTools, ...devTools, ...computerTools, ...studentTools, ...everydayTools, ...peopleTools, ...mayaTools];
+export const allTools = [...productivityTools, ...extraTools, ...assistantTools, ...powerTools, ...pcTools, ...devTools, ...computerTools, ...studentTools, ...everydayTools, ...peopleTools, ...mayaTools, ...browserTools];
